@@ -1,6 +1,5 @@
--- [[ NONTK Bounty Hunter v82 FINAL ]]
--- Combat Overhaul: Phase Engine, Dodge-Strafe, Predictive Positioning, Attack Windows
--- AimLock System: Camera Lock, Character Snap, Smooth Gyro Track
+-- [[ NONTK Bounty Hunter v83 HYPER-MELEE ]]
+-- Hyper-Fast Melee Attack, Continuous Skill Fusion, Sticky Hitbox & Zero-Delay AimLock
 -- Speed Slider, Collapsible UI, Auto Hunt Loop, Anti-Rollback 160 studs/s
 
 local Players = game:GetService("Players")
@@ -22,81 +21,76 @@ local Humanoid = Character:WaitForChild("Humanoid")
 -- CONFIG
 -- ============================================================
 local Config = {
-    Enabled         = false,
-    TargetMode      = "Auto",
-    SelectedPlayer  = nil,
-    MinBountyLevel  = 20,
-    OverheadDistance= 11,   -- studs above target head
-    FlySpeed        = 160,  -- default safe speed
-    FastAttack      = true,
-    AutoHaki        = true,
-    AutoPvP         = true,
-    SkillSpam       = true,
-    Skills          = {"Z", "X", "C", "V"},
-    Weapons         = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.5,
-    DamageTestTime  = 0.8,
-    BlacklistTime   = 90,
-    AutoHunt        = true,
-    HuntInterval    = 0.1,
+    Enabled          = false,
+    TargetMode       = "Auto",
+    SelectedPlayer   = nil,
+    MinBountyLevel   = 20,
+    OverheadDistance = 4,    -- Tight 4-stud distance for 100% Melee fist hit registration
+    FlySpeed         = 160,  -- default safe speed
 
-    -- v82 Combat Phase Config
-    AttackRange     = 18,   -- max studs to begin attack
-    OrbitRadius     = 14,   -- studs to orbit at
-    OrbitSpeed      = 80,   -- orbit velocity
-    DodgeWindow     = 0.35, -- seconds to dodge after burst
-    BurstSize       = 4,    -- skill casts per burst before dodge
-    AttackCooldown  = 0.06, -- seconds between individual attacks in burst
-    PredictFrames   = 8,    -- frames ahead to predict target position
+    -- Melee & Fast Attack Engine
+    FocusMelee       = true, -- 100% Melee priority (Godhuman, E-Claw, Talon, etc.)
+    FastAttack       = true,
+    FastAttackMulti  = 3,    -- Multi-register packet burst per attack tick
+    AttackDelay      = 0.01, -- Ultra-rapid attack tick rate (100 ticks/s)
 
-    -- v82 AimLock Config
-    AimLock         = true,  -- master toggle for aimlock system
-    AimLockTarget   = "HRP", -- "HRP" = HumanoidRootPart | "HEAD" = head
-    AimLockSmooth   = 0.15,  -- camera lerp factor (0=instant, 1=no move). 0.1-0.2 = snappy but smooth
-    AimLockBodySnap = true,  -- force HRP to always face target (no turning lag)
-    AimLockFOV      = 2000,  -- max distance to maintain lock (studs). 9999 = always
+    -- Auto Buffs & PvP
+    AutoHaki         = true,
+    AutoPvP          = true,
+
+    -- Continuous Skill Fusion
+    SkillSpam        = true,
+    Skills           = {"Z", "X", "C", "V"},
+    SkillInterval    = 0.08, -- Non-blocking rapid skill sequence interval
+
+    -- Target & Safety
+    DamageTestTime   = 0.8,
+    BlacklistTime    = 90,
+    AutoHunt         = true,
+    HuntInterval     = 0.1,
+    PredictFrames    = 6,    -- Velocity compensation frames
+
+    -- Zero-Delay AimLock
+    AimLock          = true,
+    AimLockTarget    = "HRP", -- "HRP" = Body center | "HEAD" = Head
+    AimLockSmooth    = 0.05,  -- 0.05 = Snappy, near-instant lock
+    AimLockBodySnap  = true,  -- Force character HRP to face target frame-perfectly
+    AimLockFOV       = 2000,  -- Max lock distance
 }
 
 -- ============================================================
 -- STATE
 -- ============================================================
-local CurrentTarget   = nil
-local FlightBodyVelocity = nil
-local FlightBodyGyro  = nil
-local CombatFramework = nil
-local ActiveController= nil
-local LastWeaponSwitch= 0
-local CurrentWeaponIndex = 1
-local BlacklistedTargets = {}
+local CurrentTarget        = nil
+local FlightBodyVelocity   = nil
+local FlightBodyGyro       = nil
+local CombatFramework      = nil
+local ActiveController     = nil
+local BlacklistedTargets   = {}
 
--- v82: Phase Engine State
--- Phases: "APPROACH", "ORBIT", "ATTACK", "DODGE"
-local CombatPhase     = "APPROACH"
-local PhaseTimer      = 0        -- tick() at phase start
-local OrbitAngle      = 0        -- current orbit angle (radians)
-local OrbitDirection  = 1        -- +1 or -1 (flips after each DODGE)
-local BurstCount      = 0        -- skills fired this burst
-local LastAttackTime  = 0        -- tick() of last individual attack
+-- AimLock State
+local AimLock_Locked       = false
+local AimLock_LockPoint    = nil
+local AimLock_Connection   = nil
+local AimLock_PrevAutoRot  = true
 
--- v82: AimLock State
-local AimLock_Locked       = false   -- currently actively locked
-local AimLock_LockPoint    = nil     -- Vector3 of current lock point
-local AimLock_Connection   = nil     -- RenderStepped connection handle
-local AimLock_PrevAutoRot  = true    -- saved humanoid AutoRotate state
+-- Skill State
+local CurrentSkillIndex    = 1
+local LastSkillTime        = 0
 
 local CombatTracker = {
-    Player       = nil,
-    EngagedTime  = 0,
-    InitialHP    = 0,
+    Player         = nil,
+    EngagedTime    = 0,
+    InitialHP      = 0,
     HasDealtDamage = false,
 }
 
 -- ============================================================
 -- REMOTES
 -- ============================================================
-local Remotes      = ReplicatedStorage:WaitForChild("Remotes", 5)
-local CommF        = Remotes and Remotes:WaitForChild("CommF_", 5)
-local NetModule    = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+local Remotes        = ReplicatedStorage:WaitForChild("Remotes", 5)
+local CommF          = Remotes and Remotes:WaitForChild("CommF_", 5)
+local NetModule      = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
 local RegisterAttack = NetModule and (NetModule:FindFirstChild("RegisterAttack") or NetModule:FindFirstChild("RE/RegisterAttack"))
 local RegisterHit    = NetModule and (NetModule:FindFirstChild("RegisterHit")   or NetModule:FindFirstChild("RE/RegisterHit"))
 
@@ -139,46 +133,72 @@ local function IsPvPActive(player)
 end
 
 -- ============================================================
--- AIMLOCK SYSTEM (High Precision & Velocity Compensated)
+-- MELEE AUTO-EQUIP ENGINE
 -- ============================================================
+local function IsMeleeTool(tool)
+    if not tool or not tool:IsA("Tool") then return false end
+    local tType = tool:GetAttribute("WeaponType") or tool.ToolTip
+    if tType == "Melee" or tool:FindFirstChild("CombatScript") then return true end
+    local name = tool.Name:lower()
+    if name:find("combat") or name:find("melee") or name:find("godhuman")
+        or name:find("claw") or name:find("karate") or name:find("step")
+        or name:find("talon") or name:find("superhuman") or name:find("fist") then
+        return true
+    end
+    return false
+end
 
--- Returns the world position to lock onto with velocity lead
+local function EnsureMeleeEquipped()
+    if not Character or not Humanoid then return end
+
+    -- Check if currently holding a melee
+    local equippedTool = Character:FindFirstChildOfClass("Tool")
+    if equippedTool and IsMeleeTool(equippedTool) then
+        return -- Already holding Melee
+    end
+
+    -- Look in Backpack
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack then return end
+
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if IsMeleeTool(tool) then
+            Humanoid:EquipTool(tool)
+            break
+        end
+    end
+end
+
+-- ============================================================
+-- AIMLOCK ENGINE (Continuous & Lead Compensated)
+-- ============================================================
 local function GetLockPoint(target)
     if not target or not target.Character then return nil end
     local char = target.Character
     local part = (Config.AimLockTarget == "HEAD" and char:FindFirstChild("Head")) or char:FindFirstChild("HumanoidRootPart")
     if not part then return nil end
 
-    -- Lead target based on AssemblyLinearVelocity for high-speed tracking & skill prediction
+    -- Velocity lead compensation (40ms lead)
     local vel = (part:IsA("BasePart") and part.AssemblyLinearVelocity) or Vector3.new(0, 0, 0)
-    local leadTime = 0.04 -- 40ms lead compensation
-    return part.Position + (vel * leadTime)
+    return part.Position + (vel * 0.04)
 end
 
--- Smoothly lerp CFrame look direction
-local function SlerpCFrame(from, to, alpha)
-    return from:Lerp(to, alpha)
-end
-
--- Enable the AimLock — connects RenderStepped hook
 local function EnableAimLock()
     if AimLock_Connection then AimLock_Connection:Disconnect() end
     AimLock_Locked = true
 
-    -- Save & disable AutoRotate so character doesn't fight us
     if Humanoid then
         AimLock_PrevAutoRot = Humanoid.AutoRotate
         Humanoid.AutoRotate = false
     end
 
-    AimLock_Connection = RunService.RenderStepped:Connect(function(dt)
+    AimLock_Connection = RunService.RenderStepped:Connect(function()
         if not Config.AimLock or not Config.Enabled then return end
         if not CurrentTarget or not CurrentTarget.Character then return end
 
         local lockPos = GetLockPoint(CurrentTarget)
         if not lockPos then return end
 
-        -- Distance gate — drop lock if target too far
         if RootPart then
             local dist = (RootPart.Position - lockPos).Magnitude
             if dist > Config.AimLockFOV then return end
@@ -186,40 +206,29 @@ local function EnableAimLock()
 
         AimLock_LockPoint = lockPos
 
-        -- ── Camera Lock ──────────────────────────────────────────
-        -- Smoothly rotate camera toward lock point every render frame
-        local camPos = Camera.CFrame.Position
+        -- 1. Camera Lock
+        local camPos   = Camera.CFrame.Position
         local targetCF = CFrame.new(camPos, lockPos)
-        -- Lerp factor: 0.15 = snappy smooth, lower = slower
-        local alpha = math.clamp(1 - Config.AimLockSmooth, 0.01, 1)
-        Camera.CFrame = SlerpCFrame(Camera.CFrame, targetCF, alpha)
+        local alpha    = math.clamp(1 - Config.AimLockSmooth, 0.05, 1)
+        Camera.CFrame  = Camera.CFrame:Lerp(targetCF, alpha)
 
-        -- ── Character Body Snap ───────────────────────────────────
-        -- Force HRP to face the target horizontally (no y-axis tilt)
+        -- 2. Frame-Perfect Character Body Snap
         if Config.AimLockBodySnap and RootPart then
-            local myPos     = RootPart.Position
-            local flatTarget = Vector3.new(lockPos.X, myPos.Y, lockPos.Z) -- flatten Y
-            if (flatTarget - myPos).Magnitude > 0.5 then
+            local myPos      = RootPart.Position
+            local flatTarget = Vector3.new(lockPos.X, myPos.Y, lockPos.Z)
+            if (flatTarget - myPos).Magnitude > 0.3 then
                 local faceDir = (flatTarget - myPos).Unit
-                -- Build a rotation-only CFrame facing the target, keeping current position
-                local targetBodyCF = CFrame.new(myPos, myPos + faceDir)
-                -- Hard snap — no lerp on body, needs to be frame-perfect for hitbox
-                RootPart.CFrame = CFrame.new(
-                    myPos,
-                    myPos + faceDir
-                ) * CFrame.new(0, 0, 0)
+                RootPart.CFrame = CFrame.new(myPos, myPos + faceDir)
             end
         end
 
-        -- ── Gyro Lock ─────────────────────────────────────────────
-        -- If flight gyro is active, also force it to face the target
+        -- 3. Flight Gyro Lock
         if FlightBodyGyro and RootPart then
             FlightBodyGyro.CFrame = CFrame.new(RootPart.Position, lockPos)
         end
     end)
 end
 
--- Disable AimLock — disconnects hook, restores AutoRotate
 local function DisableAimLock()
     AimLock_Locked = false
     AimLock_LockPoint = nil
@@ -243,7 +252,7 @@ local function SetupFlightPhysics()
         FlightBodyVelocity.Name         = "NONTKGlide"
         FlightBodyVelocity.Velocity     = Vector3.new(0, 0, 0)
         FlightBodyVelocity.MaxForce     = Vector3.new(4e4, 4e4, 4e4)
-        FlightBodyVelocity.P            = 1250
+        FlightBodyVelocity.P            = 1500
         FlightBodyVelocity.Parent       = RootPart
     end
     if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
@@ -251,8 +260,8 @@ local function SetupFlightPhysics()
         FlightBodyGyro = Instance.new("BodyGyro")
         FlightBodyGyro.Name      = "NONTKGyro"
         FlightBodyGyro.MaxTorque = Vector3.new(4e4, 4e4, 4e4)
-        FlightBodyGyro.P         = 1250
-        FlightBodyGyro.D         = 100
+        FlightBodyGyro.P         = 1500
+        FlightBodyGyro.D         = 80
         FlightBodyGyro.CFrame    = RootPart.CFrame
         FlightBodyGyro.Parent    = RootPart
     end
@@ -264,9 +273,7 @@ local function ClearFlightPhysics()
     if Humanoid           then Humanoid.PlatformStand = false end
 end
 
--- ============================================================
--- COLLISION STRIP (every Stepped)
--- ============================================================
+-- Collision bypass
 RunService.Stepped:Connect(function()
     if Config.Enabled and Character and RootPart then
         for _, part in ipairs(Character:GetDescendants()) do
@@ -275,9 +282,7 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- ============================================================
--- CHARACTER RESPAWN
--- ============================================================
+-- Character respawn hooks
 LocalPlayer.CharacterAdded:Connect(function(char)
     Character = char
     RootPart  = char:WaitForChild("HumanoidRootPart")
@@ -299,7 +304,7 @@ end
 SetupCombatHooks()
 
 -- ============================================================
--- PVP / HAKI ENSURE
+-- AUTO BUFFS
 -- ============================================================
 local function EnsurePvPAndHaki()
     if not Character then return end
@@ -325,7 +330,7 @@ local function AcquireBestTarget()
             and p.Character:FindFirstChild("HumanoidRootPart")
             and p.Character:FindFirstChild("Humanoid") then
 
-            local hum  = p.Character.Humanoid
+            local hum    = p.Character.Humanoid
             local pLevel = GetPlayerLevel(p)
             local isBlacklisted = false
 
@@ -353,46 +358,34 @@ local function AcquireBestTarget()
 end
 
 -- ============================================================
--- WEAPON SWITCH
+-- HYPER-FAST MELEE ATTACK (Multi-Packet Burst)
 -- ============================================================
-local function SwitchWeapon()
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not backpack or not Character or not Humanoid then return end
-    local category = Config.Weapons[CurrentWeaponIndex]
-    for _, tool in ipairs(backpack:GetChildren()) do
-        if tool:IsA("Tool") then
-            local tType = tool:GetAttribute("WeaponType") or tool.ToolTip
-            if tType == category
-                or tool.Name:lower():find(category:lower())
-                or (category == "Melee" and tool:FindFirstChild("CombatScript")) then
-                Humanoid:EquipTool(tool); break
-            end
-        end
-    end
-    CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
-end
-
--- ============================================================
--- ATTACK EXECUTION
--- ============================================================
-local function ExecuteFastAttack(targetHRP)
+local function ExecuteHyperFastAttack(targetHRP)
     if not Config.FastAttack or not targetHRP then return end
+
+    -- 1. Client Framework Bypass
     pcall(function()
         if not ActiveController then SetupCombatHooks() end
         if ActiveController then
             ActiveController.timeToNextAttack  = 0
             ActiveController.attacking         = false
             ActiveController.blocking          = false
-            ActiveController.hitboxMagnitude   = 100
-            ActiveController.increment         = 3
-            if ActiveController.attack    then ActiveController:attack() end
-            if ActiveController.bladeHit  then ActiveController.bladeHit(targetHRP, {targetHRP}) end
+            ActiveController.hitboxMagnitude   = 150
+            ActiveController.increment         = 4
+            if ActiveController.attack   then ActiveController:attack() end
+            if ActiveController.bladeHit then ActiveController.bladeHit(targetHRP, {targetHRP}) end
         end
     end)
+
+    -- 2. Server Attack Multi-Packets
     pcall(function()
-        if RegisterAttack then RegisterAttack:FireServer(0) end
-        if RegisterHit    then RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}}) end
+        for _ = 1, Config.FastAttackMulti do
+            if RegisterAttack then RegisterAttack:FireServer(0) end
+            if RegisterHit    then RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}}) end
+        end
     end)
+
+    -- 3. Tool Click Activation
     local tool = Character:FindFirstChildOfClass("Tool")
     if tool then tool:Activate() end
     VirtualUser:CaptureController()
@@ -401,145 +394,54 @@ local function ExecuteFastAttack(targetHRP)
 end
 
 -- ============================================================
--- SKILL CAST (single skill, called inside burst loop)
+-- CONTINUOUS SKILL FUSION (Non-Blocking)
 -- ============================================================
-local function CastSingleSkill(key, targetHRP)
-    if not targetHRP then return end
-    pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
-    VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode[key], false, game)
-    task.wait(0.02)
-    VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-end
+local function ProcessContinuousSkills(targetHRP, targetHum)
+    if not Config.SkillSpam or not targetHRP or not targetHum or targetHum.Health <= 0 then return end
+    local now = tick()
+    if (now - LastSkillTime) < Config.SkillInterval then return end
 
--- ============================================================
--- PREDICTIVE POSITION (lead the target by N frames)
--- ============================================================
-local function PredictTargetPosition(targetHRP, frames)
-    local vel = targetHRP.AssemblyLinearVelocity
-    local dt  = frames / 60
-    return targetHRP.Position + vel * dt
-end
-
--- ============================================================
--- v82 PHASE MOVEMENT ENGINE
--- ============================================================
-local function TickCombatMovement(targetHRP, targetHum)
-    if not FlightBodyVelocity or not FlightBodyGyro then
-        SetupFlightPhysics()
-        return
+    local key = Config.Skills[CurrentSkillIndex]
+    if key then
+        task.spawn(function()
+            pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
+            VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode[key], false, game)
+            task.wait(0.015)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+        end)
     end
 
-    local now    = tick()
-    local myPos  = RootPart.Position
-    local tPos   = PredictTargetPosition(targetHRP, Config.PredictFrames)
-    local dist   = (myPos - tPos).Magnitude
+    CurrentSkillIndex = (CurrentSkillIndex % #Config.Skills) + 1
+    LastSkillTime = now
+end
 
-    -- ── APPROACH ───────────────────────────────────────────────────
-    if CombatPhase == "APPROACH" then
-        local targetPos = tPos + Vector3.new(0, Config.OverheadDistance, 0)
-        local delta     = targetPos - myPos
-        local speed     = math.min(Config.FlySpeed, 175) -- anti-rollback cap
+-- ============================================================
+-- STICKY MELEE POSITIONING (Glides directly on top of target)
+-- ============================================================
+local function GlideToMeleeRange(targetHRP)
+    SetupFlightPhysics()
+    if not FlightBodyVelocity or not FlightBodyGyro then return end
+
+    -- Lead target by 6 frames
+    local targetVel = targetHRP.AssemblyLinearVelocity
+    local leadPos   = targetHRP.Position + (targetVel * (Config.PredictFrames / 60))
+    local stickPos  = leadPos + Vector3.new(0, Config.OverheadDistance, 0)
+
+    local myPos     = RootPart.Position
+    local delta     = stickPos - myPos
+    local dist      = delta.Magnitude
+
+    FlightBodyGyro.CFrame = CFrame.new(myPos, leadPos)
+
+    if dist > 8 then
+        -- Fast intercept capped for anti-rollback
+        local speed = math.min(Config.FlySpeed, 175)
         FlightBodyVelocity.Velocity = delta.Unit * speed
-        FlightBodyGyro.CFrame = CFrame.new(myPos, tPos)
-
-        if dist <= Config.OrbitRadius + 4 then
-            CombatPhase = "ORBIT"
-            PhaseTimer  = now
-            BurstCount  = 0
-        end
-
-    -- ── ORBIT (circling, aiming) ────────────────────────────────────
-    elseif CombatPhase == "ORBIT" then
-        OrbitAngle = OrbitAngle + OrbitDirection * (Config.OrbitSpeed / Config.OrbitRadius) * 0.015
-        local orbitOffset = Vector3.new(
-            math.cos(OrbitAngle) * Config.OrbitRadius,
-            Config.OverheadDistance * 0.5,
-            math.sin(OrbitAngle) * Config.OrbitRadius
-        )
-        local orbitPos = tPos + orbitOffset
-        local delta    = orbitPos - myPos
-
-        FlightBodyVelocity.Velocity = delta * 10
-        FlightBodyGyro.CFrame = CFrame.new(myPos, tPos)
-
-        if dist <= Config.AttackRange and (now - PhaseTimer) >= 0.1 then
-            CombatPhase = "ATTACK"
-            PhaseTimer  = now
-            BurstCount  = 0
-            LastAttackTime = 0
-        end
-
-    -- ── ATTACK (burst window) ───────────────────────────────────────
-    elseif CombatPhase == "ATTACK" then
-        local attackPos = tPos + Vector3.new(0, Config.OverheadDistance * 0.3, 0)
-        local delta     = attackPos - myPos
-
-        -- Slight lateral drift so we aren't a stationary hitbox
-        local lateralDrift = Vector3.new(
-            math.cos(OrbitAngle + math.pi * 0.5) * 4,
-            0,
-            math.sin(OrbitAngle + math.pi * 0.5) * 4
-        )
-        FlightBodyVelocity.Velocity = (delta.Unit * 60) + lateralDrift
-        FlightBodyGyro.CFrame = CFrame.new(myPos, tPos)
-
-        -- Fire attack at cooldown intervals
-        if (now - LastAttackTime) >= Config.AttackCooldown then
-            pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, tPos) end)
-            ExecuteFastAttack(targetHRP)
-
-            if Config.SkillSpam and BurstCount < #Config.Skills then
-                CastSingleSkill(Config.Skills[BurstCount + 1], targetHRP)
-            end
-
-            BurstCount     = BurstCount + 1
-            LastAttackTime = now
-        end
-
-        if (now - LastWeaponSwitch) >= Config.WeaponSwitchDelay then
-            SwitchWeapon()
-            LastWeaponSwitch = now
-        end
-
-        -- Burst done → DODGE
-        if BurstCount >= Config.BurstSize then
-            CombatPhase    = "DODGE"
-            PhaseTimer     = now
-            OrbitDirection = -OrbitDirection  -- flip orbit direction each time
-        end
-
-    -- ── DODGE (strafe perpendicular to target) ──────────────────────
-    elseif CombatPhase == "DODGE" then
-        local dodgeElapsed = now - PhaseTimer
-
-        local toTarget = (tPos - myPos)
-        local up       = Vector3.new(0, 1, 0)
-        local perpDir  = toTarget:Cross(up).Unit
-        local dodgeDir = (perpDir * OrbitDirection + Vector3.new(0, 0.6, 0)).Unit
-
-        FlightBodyVelocity.Velocity = dodgeDir * Config.OrbitSpeed * 1.5
-        FlightBodyGyro.CFrame = CFrame.new(myPos, tPos)
-
-        if dodgeElapsed >= Config.DodgeWindow then
-            CombatPhase = "ORBIT"
-            PhaseTimer  = now
-            BurstCount  = 0
-            local relative = myPos - tPos
-            OrbitAngle = math.atan2(relative.Z, relative.X)
-        end
+    else
+        -- Tight sticky lock directly in melee range
+        FlightBodyVelocity.Velocity = delta * 12
+        RootPart.CFrame = CFrame.new(stickPos, leadPos)
     end
-end
-
--- ============================================================
--- COMBAT STATE RESET
--- ============================================================
-local function ResetCombatState()
-    CombatPhase    = "APPROACH"
-    PhaseTimer     = tick()
-    OrbitAngle     = 0
-    OrbitDirection = 1
-    BurstCount     = 0
-    LastAttackTime = 0
 end
 
 -- ============================================================
@@ -560,11 +462,11 @@ task.spawn(function()
                 local prev = CurrentTarget
                 CurrentTarget = AcquireBestTarget()
                 if CurrentTarget ~= prev then
-                    ResetCombatState()
                     CombatTracker.Player        = CurrentTarget
                     CombatTracker.EngagedTime   = 0
                     CombatTracker.InitialHP     = 0
                     CombatTracker.HasDealtDamage = false
+                    if Config.AimLock and CurrentTarget then EnableAimLock() end
                 end
             end
         end
@@ -572,22 +474,27 @@ task.spawn(function()
 end)
 
 -- ============================================================
--- MAIN COMBAT LOOP
+-- MAIN COMBAT ENGINE (Punch + Skill Fusion + Stickiness)
 -- ============================================================
 task.spawn(function()
     while true do
-        task.wait(0.015)
+        task.wait(Config.AttackDelay)
+
         if not Config.Enabled then
             ClearFlightPhysics()
             CurrentTarget = nil
-            CombatPhase = "APPROACH"
-            -- Disable aimlock when script is off
             if AimLock_Locked then DisableAimLock() end
             continue
         end
 
         EnsurePvPAndHaki()
 
+        -- Always ensure Melee is equipped
+        if Config.FocusMelee then
+            EnsureMeleeEquipped()
+        end
+
+        -- Manual target validation
         if Config.TargetMode == "Manual" and Config.SelectedPlayer then
             local p = Config.SelectedPlayer
             if p and p.Parent and p.Character
@@ -596,8 +503,6 @@ task.spawn(function()
                 and p.Character.Humanoid.Health > 0 then
                 if CurrentTarget ~= p then
                     CurrentTarget = p
-                    ResetCombatState()
-                    -- Re-enable aimlock on new target
                     if Config.AimLock then EnableAimLock() end
                 end
             else
@@ -606,7 +511,6 @@ task.spawn(function()
         end
 
         if not CurrentTarget or not CurrentTarget.Character then
-            -- No target — drop the lock
             if AimLock_Locked then DisableAimLock() end
             continue
         end
@@ -615,19 +519,18 @@ task.spawn(function()
         local tHum = CurrentTarget.Character:FindFirstChild("Humanoid")
         if not tHRP or not tHum or tHum.Health <= 0 then
             CurrentTarget = nil
-            ResetCombatState()
             if AimLock_Locked then DisableAimLock() end
             continue
         end
 
-        -- Activate aimlock when we have a live target
+        -- Ensure AimLock is active
         if Config.AimLock and not AimLock_Locked then
             EnableAimLock()
         elseif not Config.AimLock and AimLock_Locked then
             DisableAimLock()
         end
 
-        -- Damage tracker / blacklist
+        -- Anti-Godmode / Blacklist check
         do
             local now = tick()
             if CombatTracker.Player ~= CurrentTarget or CombatTracker.EngagedTime == 0 then
@@ -644,7 +547,6 @@ task.spawn(function()
                     if (now - CombatTracker.EngagedTime) >= Config.DamageTestTime then
                         BlacklistedTargets[CurrentTarget] = now + Config.BlacklistTime
                         CurrentTarget = nil
-                        ResetCombatState()
                         if AimLock_Locked then DisableAimLock() end
                         CombatTracker.EngagedTime = 0
                         continue
@@ -653,8 +555,18 @@ task.spawn(function()
             end
         end
 
-        SetupFlightPhysics()
-        TickCombatMovement(tHRP, tHum)
+        -- 1. Stick to Target
+        GlideToMeleeRange(tHRP)
+
+        -- 2. Execute Attacks when within range (<= 25 studs)
+        local dist = (RootPart.Position - tHRP.Position).Magnitude
+        if dist <= 25 then
+            -- Rapid Melee Punch
+            ExecuteHyperFastAttack(tHRP)
+
+            -- Continuous Non-Blocking Skill Casting
+            ProcessContinuousSkills(tHRP, tHum)
+        end
     end
 end)
 
@@ -670,8 +582,8 @@ local function BuildUI()
 
     -- MiniBar
     local MiniBar = Instance.new("Frame", ScreenGui)
-    MiniBar.Size            = UDim2.new(0, 220, 0, 36)
-    MiniBar.Position        = UDim2.new(0.5, -110, 0.0, 12)
+    MiniBar.Size            = UDim2.new(0, 230, 0, 36)
+    MiniBar.Position        = UDim2.new(0.5, -115, 0.0, 12)
     MiniBar.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
     MiniBar.BorderSizePixel = 0
     MiniBar.Active          = true
@@ -710,7 +622,7 @@ local function BuildUI()
 
     -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size            = UDim2.new(0, 380, 0, 530)
+    Main.Size            = UDim2.new(0, 380, 0, 540)
     Main.Position        = UDim2.new(0.5, -190, 0.08, 0)
     Main.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
     Main.BorderSizePixel = 0
@@ -736,7 +648,7 @@ local function BuildUI()
     HeaderTitle.Font             = Enum.Font.GothamBold
     HeaderTitle.TextSize         = 13
     HeaderTitle.TextXAlignment   = Enum.TextXAlignment.Left
-    HeaderTitle.Text             = "⚔ NONTK BOUNTY HUNTER v82"
+    HeaderTitle.Text             = "⚔ NONTK HYPER-MELEE v83"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size           = UDim2.new(0, 36, 0, 28)
@@ -778,43 +690,41 @@ local function BuildUI()
     ModeBtn.Text           = "🎯 TARGET: AUTO (PROXIMITY FIRST)"
     Instance.new("UICorner", ModeBtn).CornerRadius = UDim.new(0, 6)
 
-    -- AimLock Toggle Row (v82)
+    -- Melee Only Toggle + AimLock Row
+    local MeleeBtn = Instance.new("TextButton", Main)
+    MeleeBtn.Size           = UDim2.new(0.44, 0, 0, 28)
+    MeleeBtn.Position       = UDim2.new(0.04, 0, 0, 122)
+    MeleeBtn.BackgroundColor3 = Color3.fromRGB(180, 90, 30)
+    MeleeBtn.TextColor3     = Color3.fromRGB(255, 240, 210)
+    MeleeBtn.Font           = Enum.Font.GothamBold
+    MeleeBtn.TextSize       = 10
+    MeleeBtn.Text           = "🥊 MELEE ONLY: ON"
+    Instance.new("UICorner", MeleeBtn).CornerRadius = UDim.new(0, 6)
+
     local AimLockBtn = Instance.new("TextButton", Main)
-    AimLockBtn.Size           = UDim2.new(0.64, 0, 0, 28)
-    AimLockBtn.Position       = UDim2.new(0.04, 0, 0, 122)
+    AimLockBtn.Size           = UDim2.new(0.28, 0, 0, 28)
+    AimLockBtn.Position       = UDim2.new(0.50, 0, 0, 122)
     AimLockBtn.BackgroundColor3 = Color3.fromRGB(30, 90, 140)
     AimLockBtn.TextColor3     = Color3.fromRGB(200, 240, 255)
     AimLockBtn.Font           = Enum.Font.GothamBold
-    AimLockBtn.TextSize       = 11
-    AimLockBtn.Text           = "🎯 AIMLOCK: ACTIVE"
+    AimLockBtn.TextSize       = 10
+    AimLockBtn.Text           = "🎯 AIMLOCK: ON"
     Instance.new("UICorner", AimLockBtn).CornerRadius = UDim.new(0, 6)
 
     local AimPartBtn = Instance.new("TextButton", Main)
-    AimPartBtn.Size           = UDim2.new(0.26, 0, 0, 28)
-    AimPartBtn.Position       = UDim2.new(0.70, 0, 0, 122)
+    AimPartBtn.Size           = UDim2.new(0.18, 0, 0, 28)
+    AimPartBtn.Position       = UDim2.new(0.79, 0, 0, 122)
     AimPartBtn.BackgroundColor3 = Color3.fromRGB(28, 30, 46)
     AimPartBtn.TextColor3     = Color3.fromRGB(170, 190, 235)
     AimPartBtn.Font           = Enum.Font.GothamBold
     AimPartBtn.TextSize       = 10
-    AimPartBtn.Text           = "PART: HRP"
+    AimPartBtn.Text           = "HRP"
     Instance.new("UICorner", AimPartBtn).CornerRadius = UDim.new(0, 6)
-
-    -- Phase Indicator (v82)
-    local PhaseIndicator = Instance.new("TextLabel", Main)
-    PhaseIndicator.Size           = UDim2.new(0.92, 0, 0, 22)
-    PhaseIndicator.Position       = UDim2.new(0.04, 0, 0, 154)
-    PhaseIndicator.BackgroundColor3 = Color3.fromRGB(16, 18, 28)
-    PhaseIndicator.TextColor3     = Color3.fromRGB(160, 220, 255)
-    PhaseIndicator.Font           = Enum.Font.GothamBold
-    PhaseIndicator.TextSize       = 10
-    PhaseIndicator.TextXAlignment = Enum.TextXAlignment.Center
-    PhaseIndicator.Text           = "PHASE: ─ IDLE ─"
-    Instance.new("UICorner", PhaseIndicator).CornerRadius = UDim.new(0, 5)
 
     -- Speed Slider
     local SpeedSection = Instance.new("Frame", Main)
     SpeedSection.Size            = UDim2.new(0.92, 0, 0, 52)
-    SpeedSection.Position        = UDim2.new(0.04, 0, 0, 180)
+    SpeedSection.Position        = UDim2.new(0.04, 0, 0, 154)
     SpeedSection.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
     SpeedSection.BorderSizePixel = 0
     Instance.new("UICorner", SpeedSection).CornerRadius = UDim.new(0, 6)
@@ -912,7 +822,7 @@ local function BuildUI()
     -- Nearest Radar
     local NearestRadar = Instance.new("TextLabel", Main)
     NearestRadar.Size           = UDim2.new(0.92, 0, 0, 36)
-    NearestRadar.Position       = UDim2.new(0.04, 0, 0, 236)
+    NearestRadar.Position       = UDim2.new(0.04, 0, 0, 210)
     NearestRadar.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
     NearestRadar.TextColor3     = Color3.fromRGB(120, 235, 160)
     NearestRadar.Font           = Enum.Font.GothamBold
@@ -923,8 +833,8 @@ local function BuildUI()
 
     -- Player List
     local PlayerListFrame = Instance.new("ScrollingFrame", Main)
-    PlayerListFrame.Size           = UDim2.new(0.92, 0, 0, 115)
-    PlayerListFrame.Position       = UDim2.new(0.04, 0, 0, 276)
+    PlayerListFrame.Size           = UDim2.new(0.92, 0, 0, 125)
+    PlayerListFrame.Position       = UDim2.new(0.04, 0, 0, 250)
     PlayerListFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
     PlayerListFrame.BorderSizePixel = 0
     PlayerListFrame.CanvasSize     = UDim2.new(0, 0, 0, 0)
@@ -936,8 +846,8 @@ local function BuildUI()
 
     -- Status Box
     local Status = Instance.new("TextLabel", Main)
-    Status.Size           = UDim2.new(0.92, 0, 0, 84)
-    Status.Position       = UDim2.new(0.04, 0, 0, 395)
+    Status.Size           = UDim2.new(0.92, 0, 0, 88)
+    Status.Position       = UDim2.new(0.04, 0, 0, 380)
     Status.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
     Status.TextColor3     = Color3.fromRGB(200, 220, 255)
     Status.Font           = Enum.Font.Gotham
@@ -949,7 +859,7 @@ local function BuildUI()
     -- Refresh Button
     local RefreshBtn = Instance.new("TextButton", Main)
     RefreshBtn.Size           = UDim2.new(0.92, 0, 0, 26)
-    RefreshBtn.Position       = UDim2.new(0.04, 0, 0, 483)
+    RefreshBtn.Position       = UDim2.new(0.04, 0, 0, 474)
     RefreshBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 42)
     RefreshBtn.TextColor3     = Color3.fromRGB(160, 190, 255)
     RefreshBtn.Font           = Enum.Font.GothamBold
@@ -991,7 +901,6 @@ local function BuildUI()
                     Config.TargetMode     = "Manual"
                     ModeBtn.Text          = "TARGET: MANUAL (" .. p.Name .. ")"
                     CurrentTarget         = p
-                    ResetCombatState()
                     CombatTracker.EngagedTime    = 0
                     CombatTracker.HasDealtDamage = false
                     PopulatePlayerList()
@@ -1014,7 +923,7 @@ local function BuildUI()
         if not Config.Enabled then
             ClearFlightPhysics()
             CurrentTarget = nil
-            ResetCombatState()
+            if AimLock_Locked then DisableAimLock() end
         end
     end)
 
@@ -1028,15 +937,20 @@ local function BuildUI()
             Config.SelectedPlayer = nil
             ModeBtn.Text          = "TARGET: AUTO (PROXIMITY FIRST)"
             CurrentTarget         = nil
-            ResetCombatState()
             PopulatePlayerList()
         end
+    end)
+
+    MeleeBtn.MouseButton1Click:Connect(function()
+        Config.FocusMelee = not Config.FocusMelee
+        MeleeBtn.BackgroundColor3 = Config.FocusMelee and Color3.fromRGB(180, 90, 30) or Color3.fromRGB(40, 40, 50)
+        MeleeBtn.Text = Config.FocusMelee and "🥊 MELEE ONLY: ON" or "🥊 MELEE ONLY: OFF"
     end)
 
     AimLockBtn.MouseButton1Click:Connect(function()
         Config.AimLock = not Config.AimLock
         AimLockBtn.BackgroundColor3 = Config.AimLock and Color3.fromRGB(30, 90, 140) or Color3.fromRGB(26, 28, 40)
-        AimLockBtn.Text = Config.AimLock and "🎯 AIMLOCK: ACTIVE" or "🎯 AIMLOCK: OFF"
+        AimLockBtn.Text = Config.AimLock and "🎯 AIMLOCK: ON" or "🎯 AIMLOCK: OFF"
         if Config.AimLock and Config.Enabled and CurrentTarget then
             EnableAimLock()
         else
@@ -1050,37 +964,17 @@ local function BuildUI()
         else
             Config.AimLockTarget = "HRP"
         end
-        AimPartBtn.Text = "PART: " .. Config.AimLockTarget
+        AimPartBtn.Text = Config.AimLockTarget
     end)
-
-    local PhaseColors = {
-        APPROACH = Color3.fromRGB(80, 160, 255),
-        ORBIT    = Color3.fromRGB(255, 200, 50),
-        ATTACK   = Color3.fromRGB(255, 80, 80),
-        DODGE    = Color3.fromRGB(120, 255, 160),
-    }
 
     -- Real-time refresh
     task.spawn(function()
         while ScreenGui.Parent do
             task.wait(0.25)
 
-            if Config.Enabled and CurrentTarget then
-                local pc = PhaseColors[CombatPhase] or Color3.fromRGB(200, 200, 200)
-                PhaseIndicator.TextColor3 = pc
-                PhaseIndicator.Text = string.format(
-                    "PHASE: %s  |  Burst %d/%d  |  Orbit: %s",
-                    CombatPhase, BurstCount, Config.BurstSize,
-                    OrbitDirection > 0 and "CW" or "CCW")
-            else
-                PhaseIndicator.TextColor3 = Color3.fromRGB(80, 80, 100)
-                PhaseIndicator.Text = "PHASE: IDLE"
-            end
-
             if Config.Enabled and CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
-                StatusDot.BackgroundColor3 = (CombatPhase == "ATTACK")
-                    and Color3.fromRGB(255, 60, 60)
-                    or  (CombatPhase == "DODGE" and Color3.fromRGB(120, 255, 160) or Color3.fromRGB(255, 200, 50))
+                StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage
+                    and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 50)
             elseif Config.Enabled then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
             else
@@ -1091,9 +985,9 @@ local function BuildUI()
                 MiniLabel.Text = "NONTK | IDLE"
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local hp, maxHp = GetPlayerHealth(CurrentTarget)
-                MiniLabel.Text = string.format("%s | %s | %d/%d", CurrentTarget.Name, CombatPhase, hp, maxHp)
+                MiniLabel.Text = string.format("🥊 %s | %d/%d HP", CurrentTarget.Name, hp, maxHp)
             else
-                MiniLabel.Text = "NONTK Hunting... | " .. Config.FlySpeed .. " s/s"
+                MiniLabel.Text = "🔍 NONTK Hunting... | " .. Config.FlySpeed .. " s/s"
             end
 
             for p, btn in pairs(PlayerButtons) do
@@ -1134,23 +1028,23 @@ local function BuildUI()
 
             if not Config.Enabled then
                 Status.Text = string.format(
-                    "NONTK IDLE\nSpeed: %d studs/s | AimLock: %s\nBuso & PvP: Auto | Hunt: %s",
-                    Config.FlySpeed, Config.AimLock and "ON" or "OFF", Config.AutoHunt and "ON" or "OFF")
+                    "NONTK IDLE\nSpeed: %d studs/s | MeleeOnly: %s\nAimLock: %s | AutoHunt: %s",
+                    Config.FlySpeed, Config.FocusMelee and "ON" or "OFF",
+                    Config.AimLock and "ON" or "OFF", Config.AutoHunt and "ON" or "OFF")
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local lvl       = GetPlayerLevel(CurrentTarget)
                 local hp, maxHp = GetPlayerHealth(CurrentTarget)
                 local dist      = GetDistanceToPlayer(CurrentTarget)
+                local tool      = Character:FindFirstChildOfClass("Tool")
+                local toolName  = tool and tool.Name or "None"
                 Status.Text = string.format(
-                    "LOCKED: %s (Lv.%d)\n[%s] HP:%d/%d | Dist:%dstuds\nAimLock:%s (%s) | Burst:%d/%d\nWeapon:%s | Orbit:%s",
-                    CurrentTarget.Name, lvl, CombatPhase, hp, maxHp, dist,
-                    Config.AimLock and "ON" or "OFF", Config.AimLockTarget,
-                    BurstCount, Config.BurstSize,
-                    Config.Weapons[CurrentWeaponIndex] or "?",
-                    OrbitDirection > 0 and "CW" or "CCW")
+                    "🥊 LOCKED: %s (Lv.%d)\nHP:%d/%d | Dist:%d studs\nEquipped: %s | AimLock: %s (%s)\nAttack: HYPER-BURST (100/s)",
+                    CurrentTarget.Name, lvl, hp, maxHp, dist, toolName,
+                    Config.AimLock and "ON" or "OFF", Config.AimLockTarget)
             else
                 Status.Text = string.format(
-                    "NONTK HUNTING...\nSearching PvP targets (Lv.%d+)\nSpeed: %d studs/s | AimLock: %s",
-                    Config.MinBountyLevel, Config.FlySpeed, Config.AimLock and "ON" or "OFF")
+                    "NONTK HUNTING...\nSearching PvP targets (Lv.%d+)\nSpeed: %d studs/s | MeleeOnly: %s",
+                    Config.MinBountyLevel, Config.FlySpeed, Config.FocusMelee and "ON" or "OFF")
             end
         end
     end)
