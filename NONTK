@@ -1,6 +1,5 @@
--- [[ NONTK Bounty Hunter v81 FINAL — HYPER EDITION / FLIGHT FIX ]] --
--- Speed Slider, Collapsible UI, Auto Hunt Loop, Anti-Rollback 160 studs/s
--- FIX: Flight decoupled from combat loop, CastSkills non-blocking, smooth glide
+-- [[ NONTK Bounty Hunter v81 ULTRA ]] --
+-- CFrame Teleport Flight (ไม่มี physics ขัด), Orbit Spin Punch, Max Speed
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -17,133 +16,136 @@ local RootPart = Character:WaitForChild("HumanoidRootPart")
 local Humanoid = Character:WaitForChild("Humanoid")
 
 local Config = {
-    Enabled = false,
-    TargetMode = "Auto",
+    Enabled       = false,
+    TargetMode    = "Auto",
     SelectedPlayer = nil,
     MinBountyLevel = 20,
-    OverheadDistance = 7,
-    FlySpeed = 160,
-    FastAttack = true,
-    AutoHaki = true,
-    AutoPvP = true,
-    SkillSpam = true,
-    Skills = {"Z", "X", "C", "V"},
-    Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
+    FlySpeed      = 500,       -- studs/s (CFrame based, ไม่มี cap จาก physics)
+    OrbitRadius   = 4,         -- รัศมีวนรอบศัตรู (กงจัก)
+    OrbitSpeed    = 6,         -- รอบ/วินาที (ยิ่งสูงยิ่งหมุนเร็ว)
+    OrbitHeight   = 2,
+    AttackDist    = 12,        -- ระยะเริ่มโจมตี
+    FastAttack    = true,
+    AutoHaki      = true,
+    AutoPvP       = true,
+    SkillSpam     = true,
+    Skills        = {"Z", "X", "C", "V"},
+    Weapons       = {"Melee", "Sword", "Blox Fruit", "Gun"},
     WeaponSwitchDelay = 0.2,
-    DamageTestTime = 0.4,
-    BlacklistTime = 90,
-    AutoHunt = true,
-    HuntInterval = 0.05
+    DamageTestTime    = 0.4,
+    BlacklistTime     = 90,
+    AutoHunt      = true,
+    HuntInterval  = 0.05
 }
 
-local CurrentTarget = nil
-local FlightBodyVelocity = nil
-local FlightBodyGyro = nil
-local CombatFramework = nil
-local ActiveController = nil
+local CurrentTarget   = nil
 local LastWeaponSwitch = 0
 local CurrentWeaponIndex = 1
-local SkillCasting = false  -- FIX: guard ให้ spawn skill แค่ครั้งเดียวต่อ cycle
+local SkillCasting    = false
+local OrbitAngle      = 0
 
 local BlacklistedTargets = {}
 local CombatTracker = {
-    Player = nil,
-    EngagedTime = 0,
-    InitialHP = 0,
-    HasDealtDamage = false
+    Player = nil, EngagedTime = 0,
+    InitialHP = 0, HasDealtDamage = false
 }
 
-local Remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
-local CommF = Remotes and Remotes:WaitForChild("CommF_", 5)
-local NetModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
-local RegisterAttack = NetModule and (NetModule:FindFirstChild("RegisterAttack") or NetModule:FindFirstChild("RE/RegisterAttack"))
-local RegisterHit = NetModule and (NetModule:FindFirstChild("RegisterHit") or NetModule:FindFirstChild("RE/RegisterHit"))
+local CombatFramework = nil
+local ActiveController = nil
 
-local function GetPlayerLevel(player)
-    if not player then return 0 end
-    local data = player:FindFirstChild("Data")
-    if data and data:FindFirstChild("Level") then return tonumber(data.Level.Value) or 0 end
-    local leaderstats = player:FindFirstChild("leaderstats")
-    if leaderstats and leaderstats:FindFirstChild("Level") then return tonumber(leaderstats.Level.Value) or 0 end
-    local attr = player:GetAttribute("Level")
-    if attr then return tonumber(attr) or 0 end
-    return 0
+local Remotes      = ReplicatedStorage:WaitForChild("Remotes", 5)
+local CommF        = Remotes and Remotes:WaitForChild("CommF_", 5)
+local NetModule    = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+local RegisterAttack = NetModule and (NetModule:FindFirstChild("RegisterAttack") or NetModule:FindFirstChild("RE/RegisterAttack"))
+local RegisterHit    = NetModule and (NetModule:FindFirstChild("RegisterHit")  or NetModule:FindFirstChild("RE/RegisterHit"))
+
+-- ============================================================
+-- Helpers
+-- ============================================================
+local function GetPlayerLevel(p)
+    if not p then return 0 end
+    local d = p:FindFirstChild("Data")
+    if d and d:FindFirstChild("Level") then return tonumber(d.Level.Value) or 0 end
+    local l = p:FindFirstChild("leaderstats")
+    if l and l:FindFirstChild("Level") then return tonumber(l.Level.Value) or 0 end
+    return tonumber(p:GetAttribute("Level")) or 0
 end
 
-local function GetPlayerHealth(player)
-    if player and player.Character and player.Character:FindFirstChild("Humanoid") then
-        local hum = player.Character.Humanoid
-        return math.floor(hum.Health), math.floor(hum.MaxHealth)
+local function GetPlayerHealth(p)
+    if p and p.Character and p.Character:FindFirstChild("Humanoid") then
+        local h = p.Character.Humanoid
+        return math.floor(h.Health), math.floor(h.MaxHealth)
     end
     return 0, 0
 end
 
-local function GetDistanceToPlayer(player)
-    if RootPart and player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-        return math.floor((RootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude)
+local function GetDistanceToPlayer(p)
+    if RootPart and p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+        return math.floor((RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude)
     end
     return 999999
 end
 
-local function IsPvPActive(player)
-    if not player or not player.Character then return false end
-    local char = player.Character
-    if char:FindFirstChild("PvPDisabled") or player:FindFirstChild("PvPDisabled") then return false end
-    if char:FindFirstChildOfClass("ForceField") then return false end
-    if char:GetAttribute("PvPDisabled") == true or player:GetAttribute("PvPDisabled") == true then return false end
+local function IsPvPActive(p)
+    if not p or not p.Character then return false end
+    local c = p.Character
+    if c:FindFirstChild("PvPDisabled") or p:FindFirstChild("PvPDisabled") then return false end
+    if c:FindFirstChildOfClass("ForceField") then return false end
+    if c:GetAttribute("PvPDisabled") == true or p:GetAttribute("PvPDisabled") == true then return false end
     return true
 end
 
-local function SetupFlightPhysics()
+-- ============================================================
+-- No-physics flight setup — BodyVelocity zero-out + CFrame move
+-- ============================================================
+local BV = nil
+
+local function SetupNoPhysics()
     if not RootPart then return end
-    if not FlightBodyVelocity or not FlightBodyVelocity.Parent then
-        if FlightBodyVelocity then pcall(function() FlightBodyVelocity:Destroy() end) end
-        FlightBodyVelocity = Instance.new("BodyVelocity")
-        FlightBodyVelocity.Name = "NONTKGlide"
-        FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        FlightBodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-        FlightBodyVelocity.P = 9999
-        FlightBodyVelocity.Parent = RootPart
+    -- BodyVelocity แค่ lock gravity, velocity = 0, CFrame เราจัดเอง
+    if not BV or not BV.Parent then
+        if BV then pcall(function() BV:Destroy() end) end
+        BV = Instance.new("BodyVelocity")
+        BV.Name = "NONTKLock"
+        BV.Velocity = Vector3.new(0, 0, 0)
+        BV.MaxForce = Vector3.new(0, 1e6, 0)   -- lock gravity only ไม่ขัด XZ
+        BV.P = 9999
+        BV.Parent = RootPart
     end
-    if not FlightBodyGyro or not FlightBodyGyro.Parent then
-        if FlightBodyGyro then pcall(function() FlightBodyGyro:Destroy() end) end
-        FlightBodyGyro = Instance.new("BodyGyro")
-        FlightBodyGyro.Name = "NONTKGyro"
-        FlightBodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
-        FlightBodyGyro.P = 9999
-        FlightBodyGyro.D = 50
-        FlightBodyGyro.CFrame = RootPart.CFrame
-        FlightBodyGyro.Parent = RootPart
-    end
+    if Humanoid then Humanoid.PlatformStand = true end
 end
 
-local function ClearFlightPhysics()
-    if FlightBodyVelocity then pcall(function() FlightBodyVelocity:Destroy() end); FlightBodyVelocity = nil end
-    if FlightBodyGyro then pcall(function() FlightBodyGyro:Destroy() end); FlightBodyGyro = nil end
+local function ClearNoPhysics()
+    if BV then pcall(function() BV:Destroy() end); BV = nil end
     if Humanoid then Humanoid.PlatformStand = false end
 end
 
--- FIX: CanCollide ใน PreSimulation ไม่ iterate ซ้ำถ้า Enabled ไม่เปลี่ยน
+-- CanCollide off ทุก frame
 RunService.PreSimulation:Connect(function()
-    if Config.Enabled and Character and RootPart then
-        for _, part in ipairs(Character:GetDescendants()) do
-            if part:IsA("BasePart") then part.CanCollide = false end
+    if Config.Enabled and Character then
+        for _, p in ipairs(Character:GetDescendants()) do
+            if p:IsA("BasePart") then p.CanCollide = false end
         end
     end
 end)
 
 LocalPlayer.CharacterAdded:Connect(function(char)
     Character = char
-    RootPart = char:WaitForChild("HumanoidRootPart")
-    Humanoid = char:WaitForChild("Humanoid")
-    FlightBodyVelocity = nil  -- FIX: clear reference เก่าหลัง respawn
-    FlightBodyGyro = nil
+    RootPart  = char:WaitForChild("HumanoidRootPart")
+    Humanoid  = char:WaitForChild("Humanoid")
+    BV = nil
     task.wait(0.3)
-    SetupFlightPhysics()
-    SetupCombatHooks()
+    if Config.Enabled then SetupNoPhysics() end
+    pcall(function()
+        local ps = LocalPlayer:FindFirstChild("PlayerScripts")
+        if ps and ps:FindFirstChild("CombatFramework") then
+            CombatFramework = require(ps.CombatFramework)
+            ActiveController = CombatFramework.activeController
+        end
+    end)
 end)
 
-function SetupCombatHooks()
+local function SetupCombatHooks()
     pcall(function()
         local ps = LocalPlayer:FindFirstChild("PlayerScripts")
         if ps and ps:FindFirstChild("CombatFramework") then
@@ -154,37 +156,42 @@ function SetupCombatHooks()
 end
 SetupCombatHooks()
 
+-- ============================================================
+-- Core functions
+-- ============================================================
 local function EnsurePvPAndHaki()
     if not Character then return end
     pcall(function()
-        if Config.AutoPvP and CommF then
-            if Character:FindFirstChild("PvPDisabled") then CommF:InvokeServer("EnablePvp") end
+        if Config.AutoPvP and CommF and Character:FindFirstChild("PvPDisabled") then
+            CommF:InvokeServer("EnablePvp")
         end
-        if Config.AutoHaki and CommF then
-            if not Character:FindFirstChild("HasBuso") then CommF:InvokeServer("Buso") end
+        if Config.AutoHaki and CommF and not Character:FindFirstChild("HasBuso") then
+            CommF:InvokeServer("Buso")
         end
     end)
 end
 
 local function AcquireBestTarget()
     local best, shortest = nil, math.huge
-    local myLevel = GetPlayerLevel(LocalPlayer)
+    local myLvl = GetPlayerLevel(LocalPlayer)
     for _, p in ipairs(Players:GetPlayers()) do
-        if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") and p.Character:FindFirstChild("Humanoid") then
-            local hum = p.Character.Humanoid
-            local hrp = p.Character.HumanoidRootPart
-            local pLevel = GetPlayerLevel(p)
-            local isBlacklisted = false
+        if p ~= LocalPlayer and p.Character
+            and p.Character:FindFirstChild("HumanoidRootPart")
+            and p.Character:FindFirstChild("Humanoid") then
+            local hum  = p.Character.Humanoid
+            local hrp  = p.Character.HumanoidRootPart
+            local pLvl = GetPlayerLevel(p)
+            local bl   = false
             if BlacklistedTargets[p] then
-                if tick() < BlacklistedTargets[p] then isBlacklisted = true
+                if tick() < BlacklistedTargets[p] then bl = true
                 else BlacklistedTargets[p] = nil end
             end
-            if not isBlacklisted and hum.Health > 0 and IsPvPActive(p) and pLevel >= Config.MinBountyLevel then
-                local eligible = true
-                if myLevel > 100 and pLevel < (myLevel - 350) and pLevel < 2000 then eligible = false end
-                if eligible then
-                    local dist = (RootPart.Position - hrp.Position).Magnitude
-                    if dist < shortest then shortest = dist; best = p end
+            if not bl and hum.Health > 0 and IsPvPActive(p) and pLvl >= Config.MinBountyLevel then
+                local ok = true
+                if myLvl > 100 and pLvl < (myLvl - 350) and pLvl < 2000 then ok = false end
+                if ok then
+                    local d = (RootPart.Position - hrp.Position).Magnitude
+                    if d < shortest then shortest = d; best = p end
                 end
             end
         end
@@ -193,13 +200,14 @@ local function AcquireBestTarget()
 end
 
 local function SwitchWeapon()
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not backpack or not Character or not Humanoid then return end
-    local category = Config.Weapons[CurrentWeaponIndex]
-    for _, tool in ipairs(backpack:GetChildren()) do
+    local bp = LocalPlayer:FindFirstChild("Backpack")
+    if not bp or not Character or not Humanoid then return end
+    local cat = Config.Weapons[CurrentWeaponIndex]
+    for _, tool in ipairs(bp:GetChildren()) do
         if tool:IsA("Tool") then
-            local tType = tool:GetAttribute("WeaponType") or tool.ToolTip
-            if tType == category or tool.Name:lower():find(category:lower()) or (category == "Melee" and tool:FindFirstChild("CombatScript")) then
+            local tt = tool:GetAttribute("WeaponType") or tool.ToolTip
+            if tt == cat or tool.Name:lower():find(cat:lower())
+                or (cat == "Melee" and tool:FindFirstChild("CombatScript")) then
                 Humanoid:EquipTool(tool); break
             end
         end
@@ -207,41 +215,49 @@ local function SwitchWeapon()
     CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
 end
 
-local function ExecuteFastAttack(targetHRP)
-    if not Config.FastAttack or not targetHRP then return end
+-- ============================================================
+-- HYPER PUNCH — ยิง hitbox + RegisterHit ทุก frame ไม่รอ
+-- ============================================================
+local function HyperPunch(tHRP)
+    if not tHRP then return end
+    -- ดัด ActiveController hitbox ให้ใหญ่มาก
     pcall(function()
         if not ActiveController then SetupCombatHooks() end
         if ActiveController then
             ActiveController.timeToNextAttack = 0
-            ActiveController.attacking = false
-            ActiveController.blocking = false
-            ActiveController.hitboxMagnitude = 100
-            ActiveController.increment = 3
-            if ActiveController.attack then ActiveController:attack() end
-            if ActiveController.bladeHit then ActiveController.bladeHit(targetHRP, {targetHRP}) end
+            ActiveController.attacking        = false
+            ActiveController.blocking         = false
+            ActiveController.hitboxMagnitude  = 999   -- ใหญ่มาก
+            ActiveController.increment        = 5
+            if ActiveController.attack    then ActiveController:attack() end
+            if ActiveController.bladeHit  then ActiveController.bladeHit(tHRP, {tHRP}) end
         end
     end)
+    -- ยิง remote
     pcall(function()
         if RegisterAttack then RegisterAttack:FireServer(0) end
-        if RegisterHit then RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}}) end
+        if RegisterHit    then RegisterHit:FireServer(tHRP, {{tHRP.Parent, tHRP}}) end
     end)
+    -- ActivateTool + M1
     local tool = Character:FindFirstChildOfClass("Tool")
-    if tool then tool:Activate() end
+    if tool then pcall(function() tool:Activate() end) end
     VirtualUser:CaptureController()
     VirtualUser:Button1Down(Vector2.new(0, 0))
     VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
--- FIX: CastSkills ไม่ block แล้ว — spawn แยก thread + guard ไม่ให้ซ้อน
-local function CastSkills(targetHRP, targetHum)
-    if not Config.SkillSpam or not targetHRP or targetHum.Health <= 0 then return end
-    if SkillCasting then return end  -- กำลัง cast อยู่แล้ว ข้ามไป
+-- ============================================================
+-- SKILL SPAM — non-blocking
+-- ============================================================
+local function CastSkills(tHRP, tHum)
+    if not Config.SkillSpam or not tHRP or tHum.Health <= 0 then return end
+    if SkillCasting then return end
     SkillCasting = true
     task.spawn(function()
-        pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
+        pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, tHRP.Position) end)
         for _, key in ipairs(Config.Skills) do
-            if not CurrentTarget or not targetHRP.Parent or targetHum.Health <= 0 then break end
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+            if not CurrentTarget or tHum.Health <= 0 then break end
+            VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode[key], false, game)
             task.wait(0.01)
             VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
             task.wait(0.01)
@@ -250,67 +266,75 @@ local function CastSkills(targetHRP, targetHum)
     end)
 end
 
--- =============================================================
--- FIX: GlideToTarget แยกออกมาอยู่ใน Heartbeat loop ของตัวเอง
--- ไม่ขึ้นกับ combat loop → บินต่อเนื่องแม้ CastSkills กำลัง cast
--- =============================================================
-RunService.Heartbeat:Connect(function()
-    if not Config.Enabled then return end
-    if not CurrentTarget then return end
-    if not CurrentTarget.Character then return end
-
-    local tHRP = CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
-    local tHum = CurrentTarget.Character:FindFirstChild("Humanoid")
+-- ============================================================
+-- HEARTBEAT — CFrame Teleport Flight + Orbit Spin Punch
+-- ทุก frame: บินหา → วนรอบ → ต่อย
+-- ============================================================
+RunService.Heartbeat:Connect(function(dt)
+    if not Config.Enabled or not CurrentTarget then return end
+    local char = CurrentTarget.Character
+    if not char then return end
+    local tHRP = char:FindFirstChild("HumanoidRootPart")
+    local tHum = char:FindFirstChild("Humanoid")
     if not tHRP or not tHum or tHum.Health <= 0 then return end
     if not RootPart then return end
 
-    SetupFlightPhysics()
-    if not FlightBodyVelocity or not FlightBodyGyro then return end
+    SetupNoPhysics()
 
-    local targetPos = tHRP.Position + Vector3.new(0, Config.OverheadDistance, 0)
-    local curPos = RootPart.Position
-    local delta = targetPos - curPos
-    local dist = delta.Magnitude
+    local tPos = tHRP.Position
+    local myPos = RootPart.Position
+    local dist  = (myPos - tPos).Magnitude
 
-    -- FIX: หันหน้าไปหาศัตรู ไม่ tilt -90 เพราะมันทำให้ตัวละครหงายหลัง
-    FlightBodyGyro.CFrame = CFrame.new(curPos, tHRP.Position)
-
-    if dist > 6 then
-        -- บินเต็มสปีดตรงไปยัง target overhead
-        FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
+    if dist > Config.AttackDist then
+        -- === TELEPORT FLY ===
+        -- เคลื่อนที่ตรงไปหาศัตรู overhead
+        local overhead = tPos + Vector3.new(0, Config.OrbitHeight + 2, 0)
+        local delta    = overhead - myPos
+        local step     = math.min(Config.FlySpeed * dt, delta.Magnitude)
+        local newPos   = myPos + delta.Unit * step
+        RootPart.CFrame = CFrame.new(newPos, tPos)
     else
-        -- อยู่ใน range แล้ว หยุดบิน
-        FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        -- === ORBIT SPIN (กงจัก) ===
+        OrbitAngle = OrbitAngle + Config.OrbitSpeed * dt * math.pi * 2
+        local ox = math.cos(OrbitAngle) * Config.OrbitRadius
+        local oz = math.sin(OrbitAngle) * Config.OrbitRadius
+        local orbitPos = tPos + Vector3.new(ox, Config.OrbitHeight, oz)
+        -- teleport ไปตำแหน่ง orbit + หันหน้าเข้าหาศัตรู
+        RootPart.CFrame = CFrame.new(orbitPos, tPos)
+        -- ต่อยทุก frame ที่ orbit
+        HyperPunch(tHRP)
     end
+
+    -- aim camera ที่ศัตรู
+    pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, tPos) end)
 end)
 
--- =============================================================
--- HUNT LOOP: scan หาเป้าหมาย
--- =============================================================
+-- ============================================================
+-- HUNT LOOP
+-- ============================================================
 task.spawn(function()
     while true do
         task.wait(Config.HuntInterval)
         if Config.Enabled and Config.AutoHunt and Config.TargetMode == "Auto" then
-            local needNew = not CurrentTarget
-                or not CurrentTarget.Parent
+            local dead = not CurrentTarget or not CurrentTarget.Parent
                 or not CurrentTarget.Character
-                or not CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
                 or not CurrentTarget.Character:FindFirstChild("Humanoid")
                 or CurrentTarget.Character.Humanoid.Health <= 0
-            if needNew then
+            if dead then
                 CurrentTarget = AcquireBestTarget()
-                CombatTracker.Player = CurrentTarget
-                CombatTracker.EngagedTime = 0
-                CombatTracker.InitialHP = 0
+                CombatTracker.Player         = CurrentTarget
+                CombatTracker.EngagedTime    = 0
+                CombatTracker.InitialHP      = 0
                 CombatTracker.HasDealtDamage = false
+                OrbitAngle = 0
             end
         end
     end
 end)
 
--- =============================================================
--- COMBAT LOOP: โจมตีเท่านั้น ไม่มี wait จาก skill blocking แล้ว
--- =============================================================
+-- ============================================================
+-- COMBAT LOOP — weapon switch + skill + damage tracker + blacklist
+-- ============================================================
 task.spawn(function()
     while true do
         task.wait(0.008)
@@ -319,33 +343,35 @@ task.spawn(function()
 
             if Config.TargetMode == "Manual" and Config.SelectedPlayer then
                 local p = Config.SelectedPlayer
-                if p and p.Parent and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
-                    and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
+                if p and p.Parent and p.Character
+                    and p.Character:FindFirstChild("HumanoidRootPart")
+                    and p.Character:FindFirstChild("Humanoid")
+                    and p.Character.Humanoid.Health > 0 then
                     CurrentTarget = p
                 else
                     CurrentTarget = nil
                 end
             end
 
-            if CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("HumanoidRootPart") then
+            if CurrentTarget and CurrentTarget.Character
+                and CurrentTarget.Character:FindFirstChild("HumanoidRootPart") then
                 local tHRP = CurrentTarget.Character.HumanoidRootPart
                 local tHum = CurrentTarget.Character.Humanoid
 
                 if tHum.Health > 0 then
                     local dist = (RootPart.Position - tHRP.Position).Magnitude
-
-                    if dist <= 25 then
-                        -- Damage tracking
+                    if dist <= Config.AttackDist + 5 then
+                        -- Damage tracker
                         if CombatTracker.Player ~= CurrentTarget or CombatTracker.EngagedTime == 0 then
-                            CombatTracker.Player = CurrentTarget
-                            CombatTracker.EngagedTime = tick()
-                            CombatTracker.InitialHP = tHum.Health
+                            CombatTracker.Player         = CurrentTarget
+                            CombatTracker.EngagedTime    = tick()
+                            CombatTracker.InitialHP      = tHum.Health
                             CombatTracker.HasDealtDamage = false
                         else
                             if tHum.Health < CombatTracker.InitialHP then
                                 CombatTracker.HasDealtDamage = true
-                                CombatTracker.InitialHP = tHum.Health
-                                CombatTracker.EngagedTime = tick()
+                                CombatTracker.InitialHP      = tHum.Health
+                                CombatTracker.EngagedTime    = tick()
                             elseif not CombatTracker.HasDealtDamage then
                                 if (tick() - CombatTracker.EngagedTime) >= Config.DamageTestTime then
                                     BlacklistedTargets[CurrentTarget] = tick() + Config.BlacklistTime
@@ -354,13 +380,11 @@ task.spawn(function()
                                 end
                             end
                         end
-
                         if CurrentTarget then
                             if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
                                 SwitchWeapon(); LastWeaponSwitch = tick()
                             end
-                            ExecuteFastAttack(tHRP)
-                            CastSkills(tHRP, tHum)  -- non-blocking แล้ว
+                            CastSkills(tHRP, tHum)
                         end
                     end
                 else
@@ -368,97 +392,93 @@ task.spawn(function()
                 end
             end
         else
-            ClearFlightPhysics()
+            ClearNoPhysics()
             CurrentTarget = nil
+            OrbitAngle = 0
         end
     end
 end)
 
--- [[ UI ]] --
+-- ============================================================
+-- UI
+-- ============================================================
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
     ScreenGui.Name = "NONTKHub"
     ScreenGui.ResetOnSpawn = false
-    local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
-    ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
+    local ok, cg = pcall(function() return game:GetService("CoreGui") end)
+    ScreenGui.Parent = ok and cg or LocalPlayer:WaitForChild("PlayerGui")
 
+    -- MiniBar
     local MiniBar = Instance.new("Frame", ScreenGui)
     MiniBar.Size = UDim2.new(0, 220, 0, 36)
-    MiniBar.Position = UDim2.new(0.5, -110, 0.0, 12)
+    MiniBar.Position = UDim2.new(0.5, -110, 0, 12)
     MiniBar.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
     MiniBar.BorderSizePixel = 0
-    MiniBar.Active = true
-    MiniBar.Draggable = true
+    MiniBar.Active = true; MiniBar.Draggable = true
     Instance.new("UICorner", MiniBar).CornerRadius = UDim.new(0, 8)
-    local MiniStroke = Instance.new("UIStroke", MiniBar)
-    MiniStroke.Color = Color3.fromRGB(80, 85, 130)
-    MiniStroke.Thickness = 1.2
+    local ms = Instance.new("UIStroke", MiniBar)
+    ms.Color = Color3.fromRGB(80, 85, 130); ms.Thickness = 1.2
 
     local StatusDot = Instance.new("Frame", MiniBar)
-    StatusDot.Size = UDim2.new(0, 10, 0, 10)
-    StatusDot.Position = UDim2.new(0, 10, 0.5, -5)
-    StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    StatusDot.Size = UDim2.new(0,10,0,10)
+    StatusDot.Position = UDim2.new(0,10,0.5,-5)
+    StatusDot.BackgroundColor3 = Color3.fromRGB(80,80,80)
     StatusDot.BorderSizePixel = 0
-    Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
+    Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1,0)
 
     local MiniLabel = Instance.new("TextLabel", MiniBar)
-    MiniLabel.Size = UDim2.new(1, -70, 1, 0)
-    MiniLabel.Position = UDim2.new(0, 26, 0, 0)
+    MiniLabel.Size = UDim2.new(1,-70,1,0)
+    MiniLabel.Position = UDim2.new(0,26,0,0)
     MiniLabel.BackgroundTransparency = 1
-    MiniLabel.TextColor3 = Color3.fromRGB(210, 210, 255)
-    MiniLabel.Font = Enum.Font.GothamBold
-    MiniLabel.TextSize = 11
+    MiniLabel.TextColor3 = Color3.fromRGB(210,210,255)
+    MiniLabel.Font = Enum.Font.GothamBold; MiniLabel.TextSize = 11
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
     MiniLabel.Text = "NONTK | IDLE"
 
     local CollapseBtn = Instance.new("TextButton", MiniBar)
-    CollapseBtn.Size = UDim2.new(0, 50, 1, -8)
-    CollapseBtn.Position = UDim2.new(1, -56, 0, 4)
-    CollapseBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 45)
-    CollapseBtn.TextColor3 = Color3.fromRGB(180, 200, 255)
-    CollapseBtn.Font = Enum.Font.GothamBold
-    CollapseBtn.TextSize = 11
+    CollapseBtn.Size = UDim2.new(0,50,1,-8)
+    CollapseBtn.Position = UDim2.new(1,-56,0,4)
+    CollapseBtn.BackgroundColor3 = Color3.fromRGB(30,32,45)
+    CollapseBtn.TextColor3 = Color3.fromRGB(180,200,255)
+    CollapseBtn.Font = Enum.Font.GothamBold; CollapseBtn.TextSize = 11
     CollapseBtn.Text = "▼ HUB"
-    Instance.new("UICorner", CollapseBtn).CornerRadius = UDim.new(0, 5)
+    Instance.new("UICorner", CollapseBtn).CornerRadius = UDim.new(0,5)
 
+    -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, 360, 0, 520)
-    Main.Position = UDim2.new(0.5, -180, 0.08, 0)
-    Main.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
-    Main.BorderSizePixel = 0
-    Main.Active = true
-    Main.Draggable = true
+    Main.Size = UDim2.new(0,380,0,560)
+    Main.Position = UDim2.new(0.5,-190,0.08,0)
+    Main.BackgroundColor3 = Color3.fromRGB(12,12,16)
+    Main.BorderSizePixel = 0; Main.Active = true; Main.Draggable = true
     Main.Visible = false
-    Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
-    local Stroke = Instance.new("UIStroke", Main)
-    Stroke.Color = Color3.fromRGB(90, 95, 145)
-    Stroke.Thickness = 1.5
+    Instance.new("UICorner", Main).CornerRadius = UDim.new(0,10)
+    local sk = Instance.new("UIStroke", Main)
+    sk.Color = Color3.fromRGB(90,95,145); sk.Thickness = 1.5
 
     local Header = Instance.new("Frame", Main)
-    Header.Size = UDim2.new(1, 0, 0, 44)
-    Header.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+    Header.Size = UDim2.new(1,0,0,44)
+    Header.BackgroundColor3 = Color3.fromRGB(18,18,28)
     Header.BorderSizePixel = 0
-    Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 10)
+    Instance.new("UICorner", Header).CornerRadius = UDim.new(0,10)
 
     local HeaderTitle = Instance.new("TextLabel", Header)
-    HeaderTitle.Size = UDim2.new(1, -50, 1, 0)
-    HeaderTitle.Position = UDim2.new(0, 14, 0, 0)
+    HeaderTitle.Size = UDim2.new(1,-50,1,0)
+    HeaderTitle.Position = UDim2.new(0,14,0,0)
     HeaderTitle.BackgroundTransparency = 1
-    HeaderTitle.TextColor3 = Color3.fromRGB(240, 240, 255)
-    HeaderTitle.Font = Enum.Font.GothamBold
-    HeaderTitle.TextSize = 13
+    HeaderTitle.TextColor3 = Color3.fromRGB(240,240,255)
+    HeaderTitle.Font = Enum.Font.GothamBold; HeaderTitle.TextSize = 13
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚔ NONTK BOUNTY HUNTER v81 HYPER"
+    HeaderTitle.Text = "⚙ NONTK v81 ULTRA | Orbit Spin"
 
     local CloseBtn = Instance.new("TextButton", Header)
-    CloseBtn.Size = UDim2.new(0, 36, 0, 28)
-    CloseBtn.Position = UDim2.new(1, -42, 0.5, -14)
-    CloseBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    CloseBtn.Font = Enum.Font.GothamBold
-    CloseBtn.TextSize = 13
+    CloseBtn.Size = UDim2.new(0,36,0,28)
+    CloseBtn.Position = UDim2.new(1,-42,0.5,-14)
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(180,50,50)
+    CloseBtn.TextColor3 = Color3.fromRGB(255,255,255)
+    CloseBtn.Font = Enum.Font.GothamBold; CloseBtn.TextSize = 13
     CloseBtn.Text = "✕"
-    Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
+    Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0,6)
     CloseBtn.MouseButton1Click:Connect(function() Main.Visible = false; CollapseBtn.Text = "▼ HUB" end)
 
     local IsOpen = false
@@ -468,172 +488,233 @@ local function BuildUI()
         CollapseBtn.Text = IsOpen and "▲ HUB" or "▼ HUB"
     end)
 
-    local Toggle = Instance.new("TextButton", Main)
-    Toggle.Size = UDim2.new(0.92, 0, 0, 40)
-    Toggle.Position = UDim2.new(0.04, 0, 0, 50)
-    Toggle.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
-    Toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Toggle.Font = Enum.Font.GothamBold
-    Toggle.TextSize = 13
-    Toggle.Text = "⏸ NONTK HUNT: OFF"
-    Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 7)
+    local yOff = 50
 
-    local ModeBtn = Instance.new("TextButton", Main)
-    ModeBtn.Size = UDim2.new(0.92, 0, 0, 30)
-    ModeBtn.Position = UDim2.new(0.04, 0, 0, 96)
-    ModeBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 40)
-    ModeBtn.TextColor3 = Color3.fromRGB(180, 200, 255)
-    ModeBtn.Font = Enum.Font.GothamBold
-    ModeBtn.TextSize = 11
-    ModeBtn.Text = "🎯 TARGET: AUTO (PROXIMITY FIRST)"
-    Instance.new("UICorner", ModeBtn).CornerRadius = UDim.new(0, 6)
-
-    local SpeedSection = Instance.new("Frame", Main)
-    SpeedSection.Size = UDim2.new(0.92, 0, 0, 56)
-    SpeedSection.Position = UDim2.new(0.04, 0, 0, 132)
-    SpeedSection.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
-    SpeedSection.BorderSizePixel = 0
-    Instance.new("UICorner", SpeedSection).CornerRadius = UDim.new(0, 6)
-
-    local SpeedLabel = Instance.new("TextLabel", SpeedSection)
-    SpeedLabel.Size = UDim2.new(0.75, 0, 0, 20)
-    SpeedLabel.Position = UDim2.new(0, 10, 0, 4)
-    SpeedLabel.BackgroundTransparency = 1
-    SpeedLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
-    SpeedLabel.Font = Enum.Font.GothamBold
-    SpeedLabel.TextSize = 11
-    SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-    SpeedLabel.Text = "✈ FLY SPEED: 160 studs/s"
-
-    local SpeedNote = Instance.new("TextLabel", SpeedSection)
-    SpeedNote.Size = UDim2.new(1, -10, 0, 13)
-    SpeedNote.Position = UDim2.new(0, 10, 0, 23)
-    SpeedNote.BackgroundTransparency = 1
-    SpeedNote.TextColor3 = Color3.fromRGB(110, 120, 150)
-    SpeedNote.Font = Enum.Font.Gotham
-    SpeedNote.TextSize = 9
-    SpeedNote.TextXAlignment = Enum.TextXAlignment.Left
-    SpeedNote.Text = "Safe: 90–175 studs/s | เกิน 175 = อาจโดน rollback"
-
-    local SliderTrack = Instance.new("Frame", SpeedSection)
-    SliderTrack.Size = UDim2.new(0.78, 0, 0, 8)
-    SliderTrack.Position = UDim2.new(0.1, 0, 0, 42)
-    SliderTrack.BackgroundColor3 = Color3.fromRGB(35, 35, 55)
-    SliderTrack.BorderSizePixel = 0
-    Instance.new("UICorner", SliderTrack).CornerRadius = UDim.new(1, 0)
-
-    local SliderFill = Instance.new("Frame", SliderTrack)
-    SliderFill.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
-    SliderFill.BorderSizePixel = 0
-    SliderFill.Size = UDim2.new(0.733, 0, 1, 0)
-    Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(1, 0)
-
-    local SliderKnob = Instance.new("TextButton", SliderTrack)
-    SliderKnob.Size = UDim2.new(0, 16, 0, 16)
-    SliderKnob.Position = UDim2.new(0.733, -8, 0.5, -8)
-    SliderKnob.BackgroundColor3 = Color3.fromRGB(120, 190, 255)
-    SliderKnob.Text = ""
-    SliderKnob.BorderSizePixel = 0
-    Instance.new("UICorner", SliderKnob).CornerRadius = UDim.new(1, 0)
-
-    local SpeedMin, SpeedMax = 50, 200
-    local isDragging = false
-
-    local function UpdateSlider()
-        local ratio = math.clamp((Config.FlySpeed - SpeedMin) / (SpeedMax - SpeedMin), 0, 1)
-        SliderFill.Size = UDim2.new(ratio, 0, 1, 0)
-        SliderKnob.Position = UDim2.new(ratio, -8, 0.5, -8)
-        SpeedLabel.Text = string.format("✈ FLY SPEED: %d studs/s", Config.FlySpeed)
+    local function MakeBtn(text, h, color)
+        local b = Instance.new("TextButton", Main)
+        b.Size = UDim2.new(0.92,0,0,h or 38)
+        b.Position = UDim2.new(0.04,0,0,yOff)
+        b.BackgroundColor3 = color or Color3.fromRGB(35,35,48)
+        b.TextColor3 = Color3.fromRGB(255,255,255)
+        b.Font = Enum.Font.GothamBold; b.TextSize = 12
+        b.Text = text
+        Instance.new("UICorner", b).CornerRadius = UDim.new(0,7)
+        yOff = yOff + (h or 38) + 6
+        return b
     end
 
-    SliderKnob.MouseButton1Down:Connect(function() isDragging = true end)
+    local function MakeLabel(text, h, color)
+        local l = Instance.new("TextLabel", Main)
+        l.Size = UDim2.new(0.92,0,0,h or 30)
+        l.Position = UDim2.new(0.04,0,0,yOff)
+        l.BackgroundColor3 = color or Color3.fromRGB(16,18,26)
+        l.TextColor3 = Color3.fromRGB(200,220,255)
+        l.Font = Enum.Font.Gotham; l.TextSize = 11
+        l.TextWrapped = true; l.Text = text
+        Instance.new("UICorner", l).CornerRadius = UDim.new(0,6)
+        yOff = yOff + (h or 30) + 6
+        return l
+    end
+
+    local Toggle = MakeBtn("⏸ NONTK HUNT: OFF", 40, Color3.fromRGB(35,35,48))
+    local ModeBtn = MakeBtn("🎯 TARGET: AUTO (PROXIMITY FIRST)", 28, Color3.fromRGB(26,28,40))
+    ModeBtn.TextSize = 10
+
+    -- Speed Slider
+    local SpeedFrame = Instance.new("Frame", Main)
+    SpeedFrame.Size = UDim2.new(0.92,0,0,58)
+    SpeedFrame.Position = UDim2.new(0.04,0,0,yOff)
+    SpeedFrame.BackgroundColor3 = Color3.fromRGB(18,20,30)
+    SpeedFrame.BorderSizePixel = 0
+    Instance.new("UICorner", SpeedFrame).CornerRadius = UDim.new(0,6)
+    yOff = yOff + 64
+
+    local SpeedLbl = Instance.new("TextLabel", SpeedFrame)
+    SpeedLbl.Size = UDim2.new(1,-10,0,20)
+    SpeedLbl.Position = UDim2.new(0,10,0,4)
+    SpeedLbl.BackgroundTransparency = 1
+    SpeedLbl.TextColor3 = Color3.fromRGB(200,220,255)
+    SpeedLbl.Font = Enum.Font.GothamBold; SpeedLbl.TextSize = 11
+    SpeedLbl.TextXAlignment = Enum.TextXAlignment.Left
+    SpeedLbl.Text = "✈ FLY SPEED: 500 studs/s  [CFrame Mode]"
+
+    local SNote = Instance.new("TextLabel", SpeedFrame)
+    SNote.Size = UDim2.new(1,-10,0,12)
+    SNote.Position = UDim2.new(0,10,0,24)
+    SNote.BackgroundTransparency = 1
+    SNote.TextColor3 = Color3.fromRGB(100,120,150)
+    SNote.Font = Enum.Font.Gotham; SNote.TextSize = 9
+    SNote.TextXAlignment = Enum.TextXAlignment.Left
+    SNote.Text = "CFrame teleport ไม่มี physics ขัด | Safe ทุก speed"
+
+    local STrack = Instance.new("Frame", SpeedFrame)
+    STrack.Size = UDim2.new(0.78,0,0,8)
+    STrack.Position = UDim2.new(0.1,0,0,42)
+    STrack.BackgroundColor3 = Color3.fromRGB(35,35,55)
+    STrack.BorderSizePixel = 0
+    Instance.new("UICorner", STrack).CornerRadius = UDim.new(1,0)
+
+    local SFill = Instance.new("Frame", STrack)
+    SFill.BackgroundColor3 = Color3.fromRGB(80,200,120)
+    SFill.BorderSizePixel = 0
+    SFill.Size = UDim2.new(0.45,0,1,0)  -- 500 in 50-1000
+    Instance.new("UICorner", SFill).CornerRadius = UDim.new(1,0)
+
+    local SKnob = Instance.new("TextButton", STrack)
+    SKnob.Size = UDim2.new(0,16,0,16)
+    SKnob.Position = UDim2.new(0.45,-8,0.5,-8)
+    SKnob.BackgroundColor3 = Color3.fromRGB(100,230,140)
+    SKnob.Text = ""; SKnob.BorderSizePixel = 0
+    Instance.new("UICorner", SKnob).CornerRadius = UDim.new(1,0)
+
+    local SMin, SMax = 50, 1000
+    local isDrag = false
+
+    local function UpdateSpeedSlider()
+        local r = math.clamp((Config.FlySpeed - SMin)/(SMax - SMin), 0, 1)
+        SFill.Size = UDim2.new(r,0,1,0)
+        SKnob.Position = UDim2.new(r,-8,0.5,-8)
+        SpeedLbl.Text = string.format("✈ FLY SPEED: %d studs/s  [CFrame Mode]", Config.FlySpeed)
+    end
+
+    SKnob.MouseButton1Down:Connect(function() isDrag = true end)
     game:GetService("UserInputService").InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 then isDragging = false end
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then isDrag = false end
     end)
     RunService.RenderStepped:Connect(function()
-        if isDragging then
-            local mouse = LocalPlayer:GetMouse()
-            local ratio = math.clamp((mouse.X - SliderTrack.AbsolutePosition.X) / SliderTrack.AbsoluteSize.X, 0, 1)
-            Config.FlySpeed = math.floor(SpeedMin + ratio * (SpeedMax - SpeedMin))
-            UpdateSlider()
+        if isDrag then
+            local m = LocalPlayer:GetMouse()
+            local r = math.clamp((m.X - STrack.AbsolutePosition.X)/STrack.AbsoluteSize.X, 0, 1)
+            Config.FlySpeed = math.floor(SMin + r*(SMax - SMin))
+            UpdateSpeedSlider()
         end
     end)
 
-    local BtnMinus = Instance.new("TextButton", SpeedSection)
-    BtnMinus.Size = UDim2.new(0, 24, 0, 22)
-    BtnMinus.Position = UDim2.new(0, 4, 0, 30)
-    BtnMinus.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
-    BtnMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
-    BtnMinus.Font = Enum.Font.GothamBold
-    BtnMinus.TextSize = 14
-    BtnMinus.Text = "−"
-    Instance.new("UICorner", BtnMinus).CornerRadius = UDim.new(0, 4)
-    BtnMinus.MouseButton1Click:Connect(function()
-        Config.FlySpeed = math.max(SpeedMin, Config.FlySpeed - 10); UpdateSlider()
+    local BM = Instance.new("TextButton", SpeedFrame)
+    BM.Size = UDim2.new(0,24,0,22); BM.Position = UDim2.new(0,4,0,32)
+    BM.BackgroundColor3 = Color3.fromRGB(55,55,80)
+    BM.TextColor3 = Color3.fromRGB(255,255,255)
+    BM.Font = Enum.Font.GothamBold; BM.TextSize = 14; BM.Text = "−"
+    Instance.new("UICorner", BM).CornerRadius = UDim.new(0,4)
+    BM.MouseButton1Click:Connect(function()
+        Config.FlySpeed = math.max(SMin, Config.FlySpeed - 50); UpdateSpeedSlider()
     end)
 
-    local BtnPlus = Instance.new("TextButton", SpeedSection)
-    BtnPlus.Size = UDim2.new(0, 24, 0, 22)
-    BtnPlus.Position = UDim2.new(1, -28, 0, 30)
-    BtnPlus.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
-    BtnPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
-    BtnPlus.Font = Enum.Font.GothamBold
-    BtnPlus.TextSize = 14
-    BtnPlus.Text = "+"
-    Instance.new("UICorner", BtnPlus).CornerRadius = UDim.new(0, 4)
-    BtnPlus.MouseButton1Click:Connect(function()
-        Config.FlySpeed = math.min(SpeedMax, Config.FlySpeed + 10); UpdateSlider()
+    local BP = Instance.new("TextButton", SpeedFrame)
+    BP.Size = UDim2.new(0,24,0,22); BP.Position = UDim2.new(1,-28,0,32)
+    BP.BackgroundColor3 = Color3.fromRGB(55,55,80)
+    BP.TextColor3 = Color3.fromRGB(255,255,255)
+    BP.Font = Enum.Font.GothamBold; BP.TextSize = 14; BP.Text = "+"
+    Instance.new("UICorner", BP).CornerRadius = UDim.new(0,4)
+    BP.MouseButton1Click:Connect(function()
+        Config.FlySpeed = math.min(SMax, Config.FlySpeed + 50); UpdateSpeedSlider()
     end)
 
-    local NearestRadar = Instance.new("TextLabel", Main)
-    NearestRadar.Size = UDim2.new(0.92, 0, 0, 40)
-    NearestRadar.Position = UDim2.new(0.04, 0, 0, 196)
-    NearestRadar.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
-    NearestRadar.TextColor3 = Color3.fromRGB(120, 235, 160)
-    NearestRadar.Font = Enum.Font.GothamBold
-    NearestRadar.TextSize = 11
-    NearestRadar.TextWrapped = true
-    NearestRadar.Text = "🎯 Radar: Scanning..."
-    Instance.new("UICorner", NearestRadar).CornerRadius = UDim.new(0, 6)
+    -- Orbit Speed Slider
+    local OFrame = Instance.new("Frame", Main)
+    OFrame.Size = UDim2.new(0.92,0,0,44)
+    OFrame.Position = UDim2.new(0.04,0,0,yOff)
+    OFrame.BackgroundColor3 = Color3.fromRGB(18,20,30)
+    OFrame.BorderSizePixel = 0
+    Instance.new("UICorner", OFrame).CornerRadius = UDim.new(0,6)
+    yOff = yOff + 50
 
-    local PlayerListFrame = Instance.new("ScrollingFrame", Main)
-    PlayerListFrame.Size = UDim2.new(0.92, 0, 0, 130)
-    PlayerListFrame.Position = UDim2.new(0.04, 0, 0, 242)
-    PlayerListFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
-    PlayerListFrame.BorderSizePixel = 0
-    PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
-    PlayerListFrame.ScrollBarThickness = 4
-    Instance.new("UICorner", PlayerListFrame).CornerRadius = UDim.new(0, 6)
-    local UIListLayout = Instance.new("UIListLayout", PlayerListFrame)
-    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    UIListLayout.Padding = UDim.new(0, 4)
+    local OLbl = Instance.new("TextLabel", OFrame)
+    OLbl.Size = UDim2.new(1,-10,0,18); OLbl.Position = UDim2.new(0,10,0,4)
+    OLbl.BackgroundTransparency = 1
+    OLbl.TextColor3 = Color3.fromRGB(255,180,80)
+    OLbl.Font = Enum.Font.GothamBold; OLbl.TextSize = 11
+    OLbl.TextXAlignment = Enum.TextXAlignment.Left
+    OLbl.Text = "⚙ ORBIT SPEED: 6 rot/s  (กงจักหมุนรอบศัตรู)"
 
-    local Status = Instance.new("TextLabel", Main)
-    Status.Size = UDim2.new(0.92, 0, 0, 80)
-    Status.Position = UDim2.new(0.04, 0, 0, 380)
-    Status.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
-    Status.TextColor3 = Color3.fromRGB(200, 220, 255)
-    Status.Font = Enum.Font.Gotham
-    Status.TextSize = 11
-    Status.TextWrapped = true
-    Status.Text = "Status: Standing By"
-    Instance.new("UICorner", Status).CornerRadius = UDim.new(0, 6)
+    local OTrack = Instance.new("Frame", OFrame)
+    OTrack.Size = UDim2.new(0.78,0,0,8); OTrack.Position = UDim2.new(0.1,0,0,30)
+    OTrack.BackgroundColor3 = Color3.fromRGB(35,35,55); OTrack.BorderSizePixel = 0
+    Instance.new("UICorner", OTrack).CornerRadius = UDim.new(1,0)
 
-    local RefreshBtn = Instance.new("TextButton", Main)
-    RefreshBtn.Size = UDim2.new(0.92, 0, 0, 26)
-    RefreshBtn.Position = UDim2.new(0.04, 0, 0, 468)
-    RefreshBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 42)
-    RefreshBtn.TextColor3 = Color3.fromRGB(160, 190, 255)
-    RefreshBtn.Font = Enum.Font.GothamBold
-    RefreshBtn.TextSize = 11
-    RefreshBtn.Text = "🔄 REFRESH PLAYER LIST"
-    Instance.new("UICorner", RefreshBtn).CornerRadius = UDim.new(0, 6)
+    local OFill = Instance.new("Frame", OTrack)
+    OFill.BackgroundColor3 = Color3.fromRGB(255,160,40); OFill.BorderSizePixel = 0
+    OFill.Size = UDim2.new(0.5,0,1,0)
+    Instance.new("UICorner", OFill).CornerRadius = UDim.new(1,0)
+
+    local OKnob = Instance.new("TextButton", OTrack)
+    OKnob.Size = UDim2.new(0,16,0,16); OKnob.Position = UDim2.new(0.5,-8,0.5,-8)
+    OKnob.BackgroundColor3 = Color3.fromRGB(255,200,60)
+    OKnob.Text = ""; OKnob.BorderSizePixel = 0
+    Instance.new("UICorner", OKnob).CornerRadius = UDim.new(1,0)
+
+    local OMin, OMax = 1, 20
+    local isODrag = false
+
+    local function UpdateOrbitSlider()
+        local r = math.clamp((Config.OrbitSpeed - OMin)/(OMax - OMin), 0, 1)
+        OFill.Size = UDim2.new(r,0,1,0); OKnob.Position = UDim2.new(r,-8,0.5,-8)
+        OLbl.Text = string.format("⚙ ORBIT SPEED: %.0f rot/s  (กงจักหมุนรอบศัตรู)", Config.OrbitSpeed)
+    end
+
+    OKnob.MouseButton1Down:Connect(function() isODrag = true end)
+    game:GetService("UserInputService").InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 then isODrag = false end
+    end)
+    RunService.RenderStepped:Connect(function()
+        if isODrag then
+            local m = LocalPlayer:GetMouse()
+            local r = math.clamp((m.X - OTrack.AbsolutePosition.X)/OTrack.AbsoluteSize.X, 0, 1)
+            Config.OrbitSpeed = math.floor(OMin + r*(OMax - OMin))
+            UpdateOrbitSlider()
+        end
+    end)
+
+    local OM = Instance.new("TextButton", OFrame)
+    OM.Size = UDim2.new(0,24,0,18); OM.Position = UDim2.new(0,4,0,22)
+    OM.BackgroundColor3 = Color3.fromRGB(55,55,80)
+    OM.TextColor3 = Color3.fromRGB(255,255,255)
+    OM.Font = Enum.Font.GothamBold; OM.TextSize = 14; OM.Text = "−"
+    Instance.new("UICorner", OM).CornerRadius = UDim.new(0,4)
+    OM.MouseButton1Click:Connect(function()
+        Config.OrbitSpeed = math.max(OMin, Config.OrbitSpeed - 1); UpdateOrbitSlider()
+    end)
+
+    local OP = Instance.new("TextButton", OFrame)
+    OP.Size = UDim2.new(0,24,0,18); OP.Position = UDim2.new(1,-28,0,22)
+    OP.BackgroundColor3 = Color3.fromRGB(55,55,80)
+    OP.TextColor3 = Color3.fromRGB(255,255,255)
+    OP.Font = Enum.Font.GothamBold; OP.TextSize = 14; OP.Text = "+"
+    Instance.new("UICorner", OP).CornerRadius = UDim.new(0,4)
+    OP.MouseButton1Click:Connect(function()
+        Config.OrbitSpeed = math.min(OMax, Config.OrbitSpeed + 1); UpdateOrbitSlider()
+    end)
+
+    -- Radar
+    local NearestRadar = MakeLabel("🎯 Radar: Scanning...", 38, Color3.fromRGB(14,20,16))
+    NearestRadar.TextColor3 = Color3.fromRGB(100,235,140)
+
+    -- Player List
+    local PLFrame = Instance.new("ScrollingFrame", Main)
+    PLFrame.Size = UDim2.new(0.92,0,0,100)
+    PLFrame.Position = UDim2.new(0.04,0,0,yOff)
+    PLFrame.BackgroundColor3 = Color3.fromRGB(15,15,22)
+    PLFrame.BorderSizePixel = 0
+    PLFrame.CanvasSize = UDim2.new(0,0,0,0)
+    PLFrame.ScrollBarThickness = 4
+    Instance.new("UICorner", PLFrame).CornerRadius = UDim.new(0,6)
+    local ULL = Instance.new("UIListLayout", PLFrame)
+    ULL.SortOrder = Enum.SortOrder.LayoutOrder
+    ULL.Padding = UDim.new(0,4)
+    yOff = yOff + 106
+
+    -- Status
+    local Status = MakeLabel("Status: Standing By", 70, Color3.fromRGB(14,14,20))
+
+    -- Refresh
+    local RefreshBtn = MakeBtn("🔄 REFRESH PLAYER LIST", 24, Color3.fromRGB(26,28,42))
+    RefreshBtn.TextColor3 = Color3.fromRGB(160,190,255); RefreshBtn.TextSize = 10
 
     local PlayerButtons = {}
 
     local function PopulatePlayerList()
-        for _, child in ipairs(PlayerListFrame:GetChildren()) do
-            if child:IsA("TextButton") then child:Destroy() end
+        for _, c in ipairs(PLFrame:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
         end
         PlayerButtons = {}
         local count = 0
@@ -641,31 +722,31 @@ local function BuildUI()
             if p ~= LocalPlayer then
                 count = count + 1
                 local lvl = GetPlayerLevel(p)
-                local hp, maxHp = GetPlayerHealth(p)
+                local hp, mhp = GetPlayerHealth(p)
                 local dist = GetDistanceToPlayer(p)
                 local pvp = IsPvPActive(p) and "✅" or "❌"
-                local pBtn = Instance.new("TextButton", PlayerListFrame)
-                pBtn.Size = UDim2.new(0.96, 0, 0, 30)
-                pBtn.BackgroundColor3 = (Config.SelectedPlayer == p) and Color3.fromRGB(40, 120, 70) or Color3.fromRGB(22, 22, 32)
-                pBtn.TextColor3 = Color3.fromRGB(230, 230, 255)
-                pBtn.Font = Enum.Font.Gotham
-                pBtn.TextSize = 10
-                pBtn.TextXAlignment = Enum.TextXAlignment.Left
-                pBtn.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
-                Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
-                PlayerButtons[p] = pBtn
-                pBtn.MouseButton1Click:Connect(function()
+                local pb = Instance.new("TextButton", PLFrame)
+                pb.Size = UDim2.new(0.96,0,0,28)
+                pb.BackgroundColor3 = (Config.SelectedPlayer==p) and Color3.fromRGB(40,120,70) or Color3.fromRGB(22,22,32)
+                pb.TextColor3 = Color3.fromRGB(230,230,255)
+                pb.Font = Enum.Font.Gotham; pb.TextSize = 10
+                pb.TextXAlignment = Enum.TextXAlignment.Left
+                pb.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, mhp, dist)
+                Instance.new("UICorner", pb).CornerRadius = UDim.new(0,4)
+                PlayerButtons[p] = pb
+                pb.MouseButton1Click:Connect(function()
                     Config.SelectedPlayer = p
                     Config.TargetMode = "Manual"
                     ModeBtn.Text = "🎯 TARGET: MANUAL (" .. p.Name .. ")"
                     CurrentTarget = p
                     CombatTracker.EngagedTime = 0
                     CombatTracker.HasDealtDamage = false
+                    OrbitAngle = 0
                     PopulatePlayerList()
                 end)
             end
         end
-        PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, count * 34)
+        PLFrame.CanvasSize = UDim2.new(0,0,0,count*32)
     end
 
     PopulatePlayerList()
@@ -675,9 +756,9 @@ local function BuildUI()
 
     Toggle.MouseButton1Click:Connect(function()
         Config.Enabled = not Config.Enabled
-        Toggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(40, 155, 85) or Color3.fromRGB(35, 35, 48)
+        Toggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(40,155,85) or Color3.fromRGB(35,35,48)
         Toggle.Text = Config.Enabled and "▶ NONTK HUNT: ACTIVE" or "⏸ NONTK HUNT: OFF"
-        if not Config.Enabled then ClearFlightPhysics(); CurrentTarget = nil end
+        if not Config.Enabled then ClearNoPhysics(); CurrentTarget = nil; OrbitAngle = 0 end
     end)
 
     ModeBtn.MouseButton1Click:Connect(function()
@@ -694,23 +775,23 @@ local function BuildUI()
         end
     end)
 
+    -- Realtime UI loop
     task.spawn(function()
         while ScreenGui.Parent do
             task.wait(0.25)
-
             if Config.Enabled and CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
-                StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 50)
+                StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage and Color3.fromRGB(255,60,60) or Color3.fromRGB(255,200,50)
             elseif Config.Enabled then
-                StatusDot.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(80,160,255)
             else
-                StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(80,80,80)
             end
 
             if not Config.Enabled then
                 MiniLabel.Text = "NONTK | IDLE"
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
-                local hp, maxHp = GetPlayerHealth(CurrentTarget)
-                MiniLabel.Text = string.format("⚔ NONTK | %s | %d/%d", CurrentTarget.Name, hp, maxHp)
+                local hp, mhp = GetPlayerHealth(CurrentTarget)
+                MiniLabel.Text = string.format("⚙ NONTK | %s | %d/%d", CurrentTarget.Name, hp, mhp)
             else
                 MiniLabel.Text = "🔍 NONTK Hunting... | " .. Config.FlySpeed .. " s/s"
             end
@@ -718,45 +799,45 @@ local function BuildUI()
             for p, btn in pairs(PlayerButtons) do
                 if p and p.Parent then
                     local lvl = GetPlayerLevel(p)
-                    local hp, maxHp = GetPlayerHealth(p)
+                    local hp, mhp = GetPlayerHealth(p)
                     local dist = GetDistanceToPlayer(p)
                     local pvp = IsPvPActive(p) and "✅" or "❌"
-                    btn.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
-                    btn.BackgroundColor3 = (Config.SelectedPlayer == p) and Color3.fromRGB(40, 120, 70) or Color3.fromRGB(22, 22, 32)
+                    btn.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, mhp, dist)
+                    btn.BackgroundColor3 = (Config.SelectedPlayer==p) and Color3.fromRGB(40,120,70) or Color3.fromRGB(22,22,32)
                 end
             end
 
-            local nearestP, minD = nil, math.huge
+            local nP, nD = nil, math.huge
             if RootPart then
                 for _, p in ipairs(Players:GetPlayers()) do
-                    if p ~= LocalPlayer and p.Character and p.Character:FindFirstChild("HumanoidRootPart") and p.Character:FindFirstChild("Humanoid") then
-                        if p.Character.Humanoid.Health > 0 and IsPvPActive(p) then
-                            local d = (RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
-                            if d < minD then minD = d; nearestP = p end
-                        end
+                    if p ~= LocalPlayer and p.Character
+                        and p.Character:FindFirstChild("HumanoidRootPart")
+                        and p.Character:FindFirstChild("Humanoid")
+                        and p.Character.Humanoid.Health > 0 and IsPvPActive(p) then
+                        local d = (RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
+                        if d < nD then nD = d; nP = p end
                     end
                 end
             end
 
-            if nearestP and nearestP.Character and nearestP.Character:FindFirstChild("Humanoid") then
-                local lvl = GetPlayerLevel(nearestP)
-                local hp, maxHp = GetPlayerHealth(nearestP)
-                NearestRadar.Text = string.format("🎯 Nearest PvP✅: %s (Lv.%d) | HP:%d/%d | %dstuds", nearestP.Name, lvl, hp, maxHp, math.floor(minD))
+            if nP and nP.Character and nP.Character:FindFirstChild("Humanoid") then
+                local lvl = GetPlayerLevel(nP)
+                local hp, mhp = GetPlayerHealth(nP)
+                NearestRadar.Text = string.format("🎯 Nearest PvP✅: %s (Lv.%d) | HP:%d/%d | %dstuds", nP.Name, lvl, hp, mhp, math.floor(nD))
             else
                 NearestRadar.Text = "🎯 Nearest: No PvP-enabled players found"
             end
 
             if not Config.Enabled then
-                Status.Text = string.format("⏸ NONTK IDLE\nSpeed: %d studs/s | Mode: %s\nBuso & PvP: Auto | Hunt: %s", Config.FlySpeed, Config.TargetMode, Config.AutoHunt and "ON" or "OFF")
+                Status.Text = string.format("⏸ NONTK IDLE\nFlySpeed:%d | OrbitSpeed:%.0f rot/s | Mode:%s", Config.FlySpeed, Config.OrbitSpeed, Config.TargetMode)
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local lvl = GetPlayerLevel(CurrentTarget)
-                local hp, maxHp = GetPlayerHealth(CurrentTarget)
+                local hp, mhp = GetPlayerHealth(CurrentTarget)
                 local dist = GetDistanceToPlayer(CurrentTarget)
-                local state = CombatTracker.HasDealtDamage and "🔴 EXECUTION MODE" or "🟡 APPROACHING"
-                Status.Text = string.format("⚔ LOCKED: %s (Lv.%d)\n%s | HP:%d/%d | Dist:%dstuds\nWeapon:%s | Mode:%s",
-                    CurrentTarget.Name, lvl, state, hp, maxHp, dist, Config.Weapons[CurrentWeaponIndex] or "?", Config.TargetMode)
+                local st = CombatTracker.HasDealtDamage and "🔴 ORBIT PUNCH" or "🟡 FLYING IN"
+                Status.Text = string.format("⚙ LOCKED: %s (Lv.%d)\n%s | HP:%d/%d | Dist:%dstuds\nOrbit:%.0f rot/s | Speed:%dstuds/s", CurrentTarget.Name, lvl, st, hp, mhp, dist, Config.OrbitSpeed, Config.FlySpeed)
             else
-                Status.Text = string.format("🔵 NONTK HUNTING...\nSearching PvP✅ targets (Lv.%d+)\nSpeed: %d studs/s | Blacklist: Active", Config.MinBountyLevel, Config.FlySpeed)
+                Status.Text = string.format("🔵 NONTK HUNTING...\nSearching PvP✅ (Lv.%d+) | Blacklist: ON\nFlySpeed:%d studs/s", Config.MinBountyLevel, Config.FlySpeed)
             end
         end
     end)
