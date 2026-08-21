@@ -1,5 +1,5 @@
--- [[ NONTK BOUNTY HUNTER v94 — FULL CONTROLS & SPY CAM ]] --
--- Features: Interactive Speed Slider (50–350 studs/s), Overhead Height Adjuster, Spy Cam, Manual Assassin Lock, Race V4, Mobile/PC Hub
+-- [[ NONTK BOUNTY HUNTER v95 — MASTER SPEED & SPY ASSASSIN ]] --
+-- Features: Prominent Fly Speed Panel (Slider + Presets + Textbox), Spy Cam, Manual Player Lock, Auto-Reset Nil, Race V4, Mobile/PC Hub
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -23,9 +23,9 @@ local Config = {
     Enabled = false,
     SelectedPlayer = nil,      -- เป้าหมายที่เลือก (เมื่อตายจะรีเซ็ตเป็น nil ทันที)
     Spectate = false,          -- สอดส่องกล้องดูผู้เล่นที่เลือก (Spy Cam)
+    FlySpeed = 260,            -- ความเร็วบิน (50 - 350 studs/s ปรับได้อิสระ)
     OverheadDistance = 12,     -- ความสูงเหนือหัวเป้าหมาย (studs)
     LockTolerance = 16,
-    FlySpeed = 260,            -- ความเร็วบินพุ่ง (50 - 350 studs/s)
     FastAttack = true,
     AutoHaki = true,
     AutoKen = true,
@@ -689,7 +689,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V94_TURBO_HUB"
+    ScreenGui.Name = "NONTK_V95_MASTERSPEED"
     ScreenGui.ResetOnSpawn = false
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
@@ -734,7 +734,7 @@ local function BuildUI()
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 11
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "NONTK v94 | NO TARGET"
+    MiniLabel.Text = "NONTK v95 | NO TARGET"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 52, 1, -8)
@@ -748,8 +748,8 @@ local function BuildUI()
 
     -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, IsMobile and 350 or 430, 0, IsMobile and 490 or 560)
-    Main.Position = UDim2.new(0.5, IsMobile and -175 or -215, 0.06, 0)
+    Main.Size = UDim2.new(0, IsMobile and 360 or 440, 0, IsMobile and 520 or 580)
+    Main.Position = UDim2.new(0.5, IsMobile and -180 or -220, 0.05, 0)
     Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     Main.BorderSizePixel = 0
     Main.Visible = false
@@ -773,7 +773,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11.5 or 13
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚡ NONTK v94 — TURBO ASSASSIN & SPY"
+    HeaderTitle.Text = "⚡ NONTK v95 — SPEED MASTER & ASSASSIN"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -832,7 +832,7 @@ local function BuildUI()
         return page, btn
     end
 
-    local LockPage = CreateTab("Target & Speed", "🎯", 0.0, 0.5)
+    local LockPage = CreateTab("Target & Speed", "🚀", 0.0, 0.5)
     local ConfigPage = CreateTab("Settings & Godmode", "⚙", 0.5, 0.5)
 
     local function SwitchTab(tabName)
@@ -849,7 +849,7 @@ local function BuildUI()
     end
     SwitchTab("Target & Speed")
 
-    -- [[ TAB 1: TARGET LOCK & SPEED CONTROLS ]] --
+    -- [[ TAB 1: TARGET LOCK & PROMINENT SPEED PANEL ]] --
     local LockMasterToggle = Instance.new("TextButton", LockPage)
     LockMasterToggle.Size = UDim2.new(1, 0, 0, 38)
     LockMasterToggle.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
@@ -865,26 +865,43 @@ local function BuildUI()
         if not Config.Enabled then ClearFlightPhysics() end
     end)
 
-    -- Speed Slider Box (Restored & Enhanced)
-    local SpeedSection = Instance.new("Frame", LockPage)
-    SpeedSection.Size = UDim2.new(1, 0, 0, 56)
-    SpeedSection.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
-    Instance.new("UICorner", SpeedSection).CornerRadius = UDim.new(0, 6)
+    -- ==========================================
+    -- [[ PROMINENT FLY SPEED CONTROLLER PANEL ]]
+    -- ==========================================
+    local SpeedCard = Instance.new("Frame", LockPage)
+    SpeedCard.Size = UDim2.new(1, 0, 0, 108)
+    SpeedCard.BackgroundColor3 = Color3.fromRGB(16, 22, 30)
+    Instance.new("UICorner", SpeedCard).CornerRadius = UDim.new(0, 8)
+    local SpeedCardStroke = Instance.new("UIStroke", SpeedCard)
+    SpeedCardStroke.Color = Color3.fromRGB(0, 200, 140)
+    SpeedCardStroke.Thickness = 1.2
 
-    local SpeedLabel = Instance.new("TextLabel", SpeedSection)
-    SpeedLabel.Size = UDim2.new(0.72, 0, 0, 18)
-    SpeedLabel.Position = UDim2.new(0, 10, 0, 4)
+    local SpeedLabel = Instance.new("TextLabel", SpeedCard)
+    SpeedLabel.Size = UDim2.new(0.65, 0, 0, 22)
+    SpeedLabel.Position = UDim2.new(0, 10, 0, 6)
     SpeedLabel.BackgroundTransparency = 1
-    SpeedLabel.TextColor3 = Color3.fromRGB(180, 240, 220)
+    SpeedLabel.TextColor3 = Color3.fromRGB(180, 255, 225)
     SpeedLabel.Font = Enum.Font.GothamBold
-    SpeedLabel.TextSize = 11
+    SpeedLabel.TextSize = 11.5
     SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-    SpeedLabel.Text = "🚀 TURBO SPEED: " .. Config.FlySpeed .. " studs/s"
+    SpeedLabel.Text = "✈ FLY SPEED: " .. Config.FlySpeed .. " studs/s"
 
-    local STrack = Instance.new("Frame", SpeedSection)
+    -- Direct Number Input Box
+    local SpeedInputBox = Instance.new("TextBox", SpeedCard)
+    SpeedInputBox.Size = UDim2.new(0, 64, 0, 22)
+    SpeedInputBox.Position = UDim2.new(1, -74, 0, 6)
+    SpeedInputBox.BackgroundColor3 = Color3.fromRGB(24, 34, 45)
+    SpeedInputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SpeedInputBox.Font = Enum.Font.GothamBold
+    SpeedInputBox.TextSize = 11
+    SpeedInputBox.Text = tostring(Config.FlySpeed)
+    Instance.new("UICorner", SpeedInputBox).CornerRadius = UDim.new(0, 4)
+
+    -- Interactive Slider Bar
+    local STrack = Instance.new("Frame", SpeedCard)
     STrack.Size = UDim2.new(0.72, 0, 0, 8)
-    STrack.Position = UDim2.new(0.14, 0, 0, 32)
-    STrack.BackgroundColor3 = Color3.fromRGB(30, 45, 50)
+    STrack.Position = UDim2.new(0.14, 0, 0, 40)
+    STrack.BackgroundColor3 = Color3.fromRGB(30, 45, 55)
     Instance.new("UICorner", STrack).CornerRadius = UDim.new(1, 0)
 
     local SFill = Instance.new("Frame", STrack)
@@ -894,18 +911,27 @@ local function BuildUI()
     Instance.new("UICorner", SFill).CornerRadius = UDim.new(1, 0)
 
     local SKnob = Instance.new("TextButton", STrack)
-    SKnob.Size = UDim2.new(0, 16, 0, 16)
-    SKnob.Position = UDim2.new((Config.FlySpeed - 50) / 300, -8, 0.5, -8)
+    SKnob.Size = UDim2.new(0, 18, 0, 18)
+    SKnob.Position = UDim2.new((Config.FlySpeed - 50) / 300, -9, 0.5, -9)
     SKnob.BackgroundColor3 = Color3.fromRGB(140, 255, 190)
     SKnob.Text = ""
     Instance.new("UICorner", SKnob).CornerRadius = UDim.new(1, 0)
 
-    local function UpdateSpeedUI()
+    local function SyncSpeedUI()
         local ratio = math.clamp((Config.FlySpeed - 50) / 300, 0, 1)
         SFill.Size = UDim2.new(ratio, 0, 1, 0)
-        SKnob.Position = UDim2.new(ratio, -8, 0.5, -8)
-        SpeedLabel.Text = "🚀 TURBO SPEED: " .. Config.FlySpeed .. " studs/s"
+        SKnob.Position = UDim2.new(ratio, -9, 0.5, -9)
+        SpeedLabel.Text = "✈ FLY SPEED: " .. Config.FlySpeed .. " studs/s"
+        SpeedInputBox.Text = tostring(Config.FlySpeed)
     end
+
+    SpeedInputBox.FocusLost:Connect(function()
+        local n = tonumber(SpeedInputBox.Text)
+        if n then
+            Config.FlySpeed = math.clamp(math.floor(n), 50, 350)
+        end
+        SyncSpeedUI()
+    end)
 
     local isDraggingSpeed = false
     SKnob.MouseButton1Down:Connect(function() isDraggingSpeed = true end)
@@ -919,37 +945,62 @@ local function BuildUI()
             local mouse = LocalPlayer:GetMouse()
             local ratio = math.clamp((mouse.X - STrack.AbsolutePosition.X) / STrack.AbsoluteSize.X, 0, 1)
             Config.FlySpeed = math.floor(50 + ratio * 300)
-            UpdateSpeedUI()
+            SyncSpeedUI()
         end
     end)
 
-    local BtnMinusSpeed = Instance.new("TextButton", SpeedSection)
-    BtnMinusSpeed.Size = UDim2.new(0, 22, 0, 22)
-    BtnMinusSpeed.Position = UDim2.new(0, 6, 0, 25)
-    BtnMinusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    -- Step Minus Button
+    local BtnMinusSpeed = Instance.new("TextButton", SpeedCard)
+    BtnMinusSpeed.Size = UDim2.new(0, 26, 0, 24)
+    BtnMinusSpeed.Position = UDim2.new(0, 8, 0, 32)
+    BtnMinusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 65)
     BtnMinusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
     BtnMinusSpeed.Font = Enum.Font.GothamBold
-    BtnMinusSpeed.TextSize = 13
+    BtnMinusSpeed.TextSize = 14
     BtnMinusSpeed.Text = "−"
     Instance.new("UICorner", BtnMinusSpeed).CornerRadius = UDim.new(0, 4)
     BtnMinusSpeed.MouseButton1Click:Connect(function()
         Config.FlySpeed = math.max(50, Config.FlySpeed - 15)
-        UpdateSpeedUI()
+        SyncSpeedUI()
     end)
 
-    local BtnPlusSpeed = Instance.new("TextButton", SpeedSection)
-    BtnPlusSpeed.Size = UDim2.new(0, 22, 0, 22)
-    BtnPlusSpeed.Position = UDim2.new(1, -28, 0, 25)
-    BtnPlusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    -- Step Plus Button
+    local BtnPlusSpeed = Instance.new("TextButton", SpeedCard)
+    BtnPlusSpeed.Size = UDim2.new(0, 26, 0, 24)
+    BtnPlusSpeed.Position = UDim2.new(1, -34, 0, 32)
+    BtnPlusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 65)
     BtnPlusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
     BtnPlusSpeed.Font = Enum.Font.GothamBold
-    BtnPlusSpeed.TextSize = 13
+    BtnPlusSpeed.TextSize = 14
     BtnPlusSpeed.Text = "+"
     Instance.new("UICorner", BtnPlusSpeed).CornerRadius = UDim.new(0, 4)
     BtnPlusSpeed.MouseButton1Click:Connect(function()
         Config.FlySpeed = math.min(350, Config.FlySpeed + 15)
-        UpdateSpeedUI()
+        SyncSpeedUI()
     end)
+
+    -- One-Tap Quick Speed Presets
+    local Presets = {
+        {Name = "150 (Safe)", Speed = 150},
+        {Name = "220 (Fast)", Speed = 220},
+        {Name = "260 (Turbo)", Speed = 260},
+        {Name = "350 (Max)", Speed = 350}
+    }
+    for i, pData in ipairs(Presets) do
+        local pBtn = Instance.new("TextButton", SpeedCard)
+        pBtn.Size = UDim2.new(0.22, -4, 0, 24)
+        pBtn.Position = UDim2.new((i - 1) * 0.25, 6, 0, 74)
+        pBtn.BackgroundColor3 = Color3.fromRGB(25, 40, 50)
+        pBtn.TextColor3 = Color3.fromRGB(140, 230, 200)
+        pBtn.Font = Enum.Font.GothamBold
+        pBtn.TextSize = 9.5
+        pBtn.Text = pData.Name
+        Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
+        pBtn.MouseButton1Click:Connect(function()
+            Config.FlySpeed = pData.Speed
+            SyncSpeedUI()
+        end)
+    end
 
     -- Overhead Height Box
     local HeightSection = Instance.new("Frame", LockPage)
@@ -1013,7 +1064,7 @@ local function BuildUI()
     end)
 
     local TargetStatusCard = Instance.new("TextLabel", LockPage)
-    TargetStatusCard.Size = UDim2.new(1, 0, 0, 60)
+    TargetStatusCard.Size = UDim2.new(1, 0, 0, 56)
     TargetStatusCard.BackgroundColor3 = Color3.fromRGB(14, 18, 24)
     TargetStatusCard.TextColor3 = Color3.fromRGB(200, 240, 225)
     TargetStatusCard.Font = Enum.Font.Gotham
@@ -1038,7 +1089,7 @@ local function BuildUI()
     end)
 
     local PList = Instance.new("Frame", LockPage)
-    PList.Size = UDim2.new(1, 0, 0, 170)
+    PList.Size = UDim2.new(1, 0, 0, 160)
     PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
     Instance.new("UICorner", PList).CornerRadius = UDim.new(0, 6)
 
@@ -1122,7 +1173,7 @@ local function BuildUI()
     AddToggle(ConfigPage, "Fast Attack Exploit", Config.FastAttack, function(v) Config.FastAttack = v end)
     AddToggle(ConfigPage, "Auto Skill Spam (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
 
-    LockPage.CanvasSize = UDim2.new(0, 0, 0, 480)
+    LockPage.CanvasSize = UDim2.new(0, 0, 0, 520)
     ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 380)
 
     -- Realtime UI Refresh Loop
@@ -1143,7 +1194,7 @@ local function BuildUI()
                 MiniLabel.Text = "🎯 Select Target from List"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "NONTK v94 | IDLE"
+                MiniLabel.Text = "NONTK v95 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
