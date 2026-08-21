@@ -1,5 +1,6 @@
--- [[ NONTK Bounty Hunter v81 FINAL — INSTAKILL PATCH ]] --
--- เพิ่ม: InstantKill remote abuse, Teleport-to-back, Hitbox extend, Fruit burst combo
+-- [[ NONTK Bounty Hunter v81 FINAL ]] --
+-- Speed Slider, Collapsible UI, Auto Hunt Loop, Anti-Rollback 160 studs/s
+-- COMBAT UPGRADE: Teleport-behind, Hitbox extend, Remote spam, Fruit aim lock
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -7,7 +8,6 @@ local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
-local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -21,7 +21,7 @@ local Config = {
     TargetMode = "Auto",
     SelectedPlayer = nil,
     MinBountyLevel = 20,
-    OverheadDistance = 4,       -- ลดลงให้ชิดเป้ามากขึ้น
+    OverheadDistance = 11,
     FlySpeed = 160,
     FastAttack = true,
     AutoHaki = true,
@@ -29,23 +29,11 @@ local Config = {
     SkillSpam = true,
     Skills = {"Z", "X", "C", "V"},
     Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.3,    -- เร็วขึ้น
+    WeaponSwitchDelay = 0.5,
     DamageTestTime = 0.8,
     BlacklistTime = 90,
     AutoHunt = true,
-    HuntInterval = 0.1,
-
-    -- [[ INSTAKILL CONFIG ]]
-    InstantKill = true,
-    TeleportBehind = true,      -- เทเลพอร์ตไปหลังเป้าก่อนตี
-    HitboxExtend = true,        -- ขยาย hitbox ของตัวเอง
-    HitboxSize = 12,            -- studs
-    FruitBurst = true,          -- spam fruit skill ทั้งหมดก่อน melee
-    AutoDash = true,            -- dash เข้าหาเป้าก่อนตี
-    RemoteAbuse = true,         -- fire RegisterHit ด้วย magnitude ปลอม
-    InstakillMagnitude = 999,   -- magnitude ปลอมใน RegisterHit
-    BurstDelay = 0.01,          -- delay ระหว่าง skill ใน burst
-    TeleportOffset = 2,         -- studs ด้านหลังเป้า
+    HuntInterval = 0.1
 }
 
 local CurrentTarget = nil
@@ -55,7 +43,6 @@ local CombatFramework = nil
 local ActiveController = nil
 local LastWeaponSwitch = 0
 local CurrentWeaponIndex = 1
-local HitboxPart = nil          -- hitbox extend part
 
 local BlacklistedTargets = {}
 local CombatTracker = {
@@ -71,7 +58,6 @@ local NetModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStor
 local RegisterAttack = NetModule and (NetModule:FindFirstChild("RegisterAttack") or NetModule:FindFirstChild("RE/RegisterAttack"))
 local RegisterHit = NetModule and (NetModule:FindFirstChild("RegisterHit") or NetModule:FindFirstChild("RE/RegisterHit"))
 
--- [[ HELPER FUNCTIONS ]] --
 local function GetPlayerLevel(player)
     if not player then return 0 end
     local data = player:FindFirstChild("Data")
@@ -107,35 +93,6 @@ local function IsPvPActive(player)
     return true
 end
 
--- [[ HITBOX EXTENDER ]] --
--- สร้าง invisible part ครอบตัวเอง ทำให้ server detect ว่าเราอยู่ใกล้เป้าเสมอ
-local function SetupHitboxExtender()
-    if not Config.HitboxExtend or not RootPart then return end
-    if HitboxPart and HitboxPart.Parent then HitboxPart:Destroy() end
-    HitboxPart = Instance.new("Part")
-    HitboxPart.Name = "NONTKHitbox"
-    HitboxPart.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize)
-    HitboxPart.Transparency = 1
-    HitboxPart.CanCollide = false
-    HitboxPart.Anchored = false
-    HitboxPart.CFrame = RootPart.CFrame
-    HitboxPart.Parent = Character
-
-    local weld = Instance.new("WeldConstraint")
-    weld.Part0 = RootPart
-    weld.Part1 = HitboxPart
-    weld.Parent = HitboxPart
-end
-
--- [[ TELEPORT BEHIND TARGET ]] --
--- เทเลพอร์ตไปด้านหลังเป้าก่อนโจมตี ทำให้ตีติด + เป้ามองไม่เห็น
-local function TeleportBehindTarget(targetHRP)
-    if not Config.TeleportBehind or not RootPart or not targetHRP then return end
-    local behindPos = targetHRP.CFrame * CFrame.new(0, 1, Config.TeleportOffset)
-    RootPart.CFrame = CFrame.new(behindPos.Position, targetHRP.Position)
-end
-
--- [[ FLIGHT PHYSICS ]] --
 local function SetupFlightPhysics()
     if not RootPart then return end
     if not FlightBodyVelocity or FlightBodyVelocity.Parent ~= RootPart then
@@ -143,16 +100,16 @@ local function SetupFlightPhysics()
         FlightBodyVelocity = Instance.new("BodyVelocity")
         FlightBodyVelocity.Name = "NONTKGlide"
         FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        FlightBodyVelocity.MaxForce = Vector3.new(4e5, 4e5, 4e5)  -- เพิ่ม force
-        FlightBodyVelocity.P = 9999
+        FlightBodyVelocity.MaxForce = Vector3.new(4e4, 4e4, 4e4)
+        FlightBodyVelocity.P = 1250
         FlightBodyVelocity.Parent = RootPart
     end
     if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
         if FlightBodyGyro then FlightBodyGyro:Destroy() end
         FlightBodyGyro = Instance.new("BodyGyro")
         FlightBodyGyro.Name = "NONTKGyro"
-        FlightBodyGyro.MaxTorque = Vector3.new(4e5, 4e5, 4e5)
-        FlightBodyGyro.P = 9999
+        FlightBodyGyro.MaxTorque = Vector3.new(4e4, 4e4, 4e4)
+        FlightBodyGyro.P = 1250
         FlightBodyGyro.D = 100
         FlightBodyGyro.CFrame = RootPart.CFrame
         FlightBodyGyro.Parent = RootPart
@@ -170,10 +127,6 @@ RunService.Stepped:Connect(function()
         for _, part in ipairs(Character:GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = false end
         end
-        -- อัพเดท hitbox position ตามตัวละคร
-        if HitboxPart and HitboxPart.Parent then
-            -- WeldConstraint จัดการให้อัตโนมัติ
-        end
     end
 end)
 
@@ -183,7 +136,6 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     Humanoid = char:WaitForChild("Humanoid")
     task.wait(0.3)
     SetupFlightPhysics()
-    SetupHitboxExtender()
     SetupCombatHooks()
 end)
 
@@ -193,17 +145,6 @@ function SetupCombatHooks()
         if ps and ps:FindFirstChild("CombatFramework") then
             CombatFramework = require(ps.CombatFramework)
             ActiveController = CombatFramework.activeController
-        end
-    end)
-    -- ค้นหา ActiveController จาก LocalScripts ด้วย
-    pcall(function()
-        for _, v in pairs(LocalPlayer.PlayerScripts:GetDescendants()) do
-            if v:IsA("LocalScript") and v.Name:find("Combat") then
-                local env = getfenv and getfenv(require(v))
-                if env and env.ActiveController then
-                    ActiveController = env.ActiveController
-                end
-            end
         end
     end)
 end
@@ -262,105 +203,32 @@ local function SwitchWeapon()
     CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
 end
 
--- [[ INSTAKILL CORE ]] --
--- ยิง RegisterHit ด้วย magnitude ใหญ่ปลอม + fire ทุก remote ที่เกี่ยวกับ damage
-local function FireInstakillRemotes(targetHRP)
-    if not Config.RemoteAbuse or not targetHRP then return end
-    pcall(function()
-        -- Method 1: RegisterHit magnitude spoof
-        if RegisterHit then
-            for i = 1, 5 do  -- ยิงซ้ำ 5 รอบ
-                RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}}, Config.InstakillMagnitude)
-                task.wait(0.01)
-            end
-        end
-        -- Method 2: RegisterAttack spam
-        if RegisterAttack then
-            for i = 1, 5 do
-                RegisterAttack:FireServer(Config.InstakillMagnitude)
-                task.wait(0.01)
-            end
-        end
-        -- Method 3: ค้นหา remote อื่นๆ ที่ relate กับ damage
-        if Remotes then
-            for _, remote in ipairs(Remotes:GetDescendants()) do
-                if remote:IsA("RemoteEvent") or remote:IsA("RemoteFunction") then
-                    local name = remote.Name:lower()
-                    if name:find("hit") or name:find("damage") or name:find("attack") or name:find("kill") then
-                        pcall(function()
-                            if remote:IsA("RemoteEvent") then
-                                remote:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}})
-                            end
-                        end)
-                    end
-                end
-            end
-        end
-    end)
-end
+-- ============================================================
+-- [[ COMBAT UPGRADE — ของเดิมทุกอย่าง แก้แค่ 2 function นี้ ]]
+-- ============================================================
 
--- [[ FRUIT BURST COMBO ]] --
--- กด Z X C V ทั้งหมดพร้อมกัน aim ไปที่เป้า ก่อน melee
-local function ExecuteFruitBurst(targetHRP)
-    if not Config.FruitBurst or not targetHRP then return end
-    pcall(function()
-        -- ล็อค camera ไปที่เป้า
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
-        -- สลับไปใช้ Blox Fruit ก่อน
-        local backpack = LocalPlayer:FindFirstChild("Backpack")
-        if backpack then
-            for _, tool in ipairs(backpack:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local name = tool.Name:lower()
-                    -- หา Blox Fruit tool (มักมีชื่อ fruit หรือ Devil Fruit)
-                    if name:find("fruit") or name:find("devil") or tool:GetAttribute("WeaponType") == "Blox Fruit" then
-                        Humanoid:EquipTool(tool)
-                        task.wait(0.05)
-                        break
-                    end
-                end
-            end
-        end
-        -- Burst all skills
-        for _, key in ipairs(Config.Skills) do
-            if not CurrentTarget or (CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") and CurrentTarget.Character.Humanoid.Health <= 0) then break end
-            -- aim ใหม่ทุก skill
-            Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
-            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
-            task.wait(Config.BurstDelay)
-            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-            task.wait(Config.BurstDelay)
-            -- ยิง remote ทุก skill cast
-            FireInstakillRemotes(targetHRP)
-        end
-    end)
-end
-
--- [[ FAST ATTACK — UPGRADED ]] --
 local function ExecuteFastAttack(targetHRP)
     if not Config.FastAttack or not targetHRP then return end
 
-    -- Step 1: Teleport behind target
-    TeleportBehindTarget(targetHRP)
-
-    -- Step 2: Lock camera
+    -- 1) Snap ไปด้านหลังเป้า ทำให้ melee ติดแน่นอน ไม่โดนสวน
     pcall(function()
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
+        local behind = targetHRP.CFrame * CFrame.new(0, 1, 3)
+        RootPart.CFrame = CFrame.new(behind.Position, targetHRP.Position)
     end)
 
-    -- Step 3: CombatFramework internal hack
+    -- 2) CombatFramework hack — เพิ่ม hitbox + damage multiplier
     pcall(function()
         if not ActiveController then SetupCombatHooks() end
         if ActiveController then
             ActiveController.timeToNextAttack = 0
             ActiveController.attacking = false
             ActiveController.blocking = false
-            ActiveController.hitboxMagnitude = Config.InstakillMagnitude
-            ActiveController.increment = 10       -- damage multiplier
+            ActiveController.hitboxMagnitude = 60   -- ขยาย hitbox detect
+            ActiveController.increment = 5          -- damage multiplier
             if ActiveController.attack then
-                for i = 1, 3 do
+                for i = 1, 3 do                     -- ตี 3 รอบต่อ frame
                     ActiveController:attack()
-                    task.wait(0.01)
+                    task.wait(0.005)
                 end
             end
             if ActiveController.bladeHit then
@@ -369,47 +237,84 @@ local function ExecuteFastAttack(targetHRP)
         end
     end)
 
-    -- Step 4: Remote abuse
-    FireInstakillRemotes(targetHRP)
+    -- 3) Remote fire — ยิง RegisterAttack + RegisterHit ซ้ำ
+    pcall(function()
+        if RegisterAttack then
+            RegisterAttack:FireServer(0)
+        end
+        if RegisterHit then
+            -- ยิงซ้ำ 3 รอบ ด้วย target part list
+            for i = 1, 3 do
+                RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}})
+                task.wait(0.005)
+            end
+        end
+    end)
 
-    -- Step 5: VirtualUser click spam
-    VirtualUser:CaptureController()
-    for i = 1, 5 do
-        VirtualUser:Button1Down(Vector2.new(0, 0))
-        task.wait(0.005)
-        VirtualUser:Button1Up(Vector2.new(0, 0))
-        task.wait(0.005)
-    end
-
-    -- Step 6: Equip tool + activate
+    -- 4) Tool activate spam
     local tool = Character:FindFirstChildOfClass("Tool")
     if tool then
         for i = 1, 3 do
             tool:Activate()
-            task.wait(0.01)
+            task.wait(0.005)
         end
     end
+
+    -- 5) VirtualUser click
+    VirtualUser:CaptureController()
+    VirtualUser:Button1Down(Vector2.new(0, 0))
+    task.wait(0.008)
+    VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
--- [[ SKILL SPAM — UPGRADED ]] --
 local function CastSkills(targetHRP, targetHum)
     if not Config.SkillSpam or not targetHRP or targetHum.Health <= 0 then return end
-    -- ใช้ Fruit Burst แทน skill spam ธรรมดา
-    if Config.FruitBurst then
-        ExecuteFruitBurst(targetHRP)
-        return
-    end
-    pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
+
+    -- ล็อค camera ไปที่เป้าก่อนกด skill
+    pcall(function()
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
+    end)
+
+    -- หา Blox Fruit tool แล้วสลับก่อน skill ถ้ามี
+    pcall(function()
+        local backpack = LocalPlayer:FindFirstChild("Backpack")
+        if backpack then
+            for _, tool in ipairs(backpack:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local n = tool.Name:lower()
+                    if n:find("fruit") or n:find("devil") or tool:GetAttribute("WeaponType") == "Blox Fruit" then
+                        Humanoid:EquipTool(tool)
+                        task.wait(0.05)
+                        break
+                    end
+                end
+            end
+        end
+    end)
+
     for _, key in ipairs(Config.Skills) do
         if not CurrentTarget or targetHum.Health <= 0 then break end
+        -- re-aim ทุก skill
+        pcall(function()
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
+        end)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
         task.wait(0.02)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
         task.wait(0.03)
+        -- ยิง remote หลัง skill cast แต่ละครั้ง
+        pcall(function()
+            if RegisterHit then
+                RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}})
+            end
+        end)
     end
 end
 
--- [[ GLIDE TO TARGET ]] --
+-- ============================================================
+-- [[ ของเดิมทุกอย่างตั้งแต่นี้ไป ไม่แตะ ]]
+-- ============================================================
+
 local function GlideToTarget(targetHRP)
     SetupFlightPhysics()
     if not FlightBodyVelocity or not FlightBodyGyro then return end
@@ -417,17 +322,15 @@ local function GlideToTarget(targetHRP)
     local curPos = RootPart.Position
     local delta = targetPos - curPos
     local dist = delta.Magnitude
-    FlightBodyGyro.CFrame = CFrame.new(curPos, targetHRP.Position)
-    if dist > 6 then
+    FlightBodyGyro.CFrame = CFrame.new(curPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
+    if dist > 10 then
         FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
     else
         FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        -- snap ไปเลย ไม่ต้องรอ
-        RootPart.CFrame = CFrame.new(targetPos, targetHRP.Position)
+        RootPart.CFrame = CFrame.new(targetPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
     end
 end
 
--- [[ AUTO HUNT LOOP ]] --
 task.spawn(function()
     while true do
         task.wait(Config.HuntInterval)
@@ -449,7 +352,6 @@ task.spawn(function()
     end
 end)
 
--- [[ MAIN COMBAT LOOP ]] --
 task.spawn(function()
     while true do
         task.wait(0.015)
@@ -467,7 +369,7 @@ task.spawn(function()
                 if tHum.Health > 0 then
                     GlideToTarget(tHRP)
                     local dist = (RootPart.Position - tHRP.Position).Magnitude
-                    if dist <= 30 then
+                    if dist <= 25 then
                         if CombatTracker.Player ~= CurrentTarget or CombatTracker.EngagedTime == 0 then
                             CombatTracker.Player = CurrentTarget
                             CombatTracker.EngagedTime = tick()
@@ -490,7 +392,6 @@ task.spawn(function()
                             if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
                                 SwitchWeapon(); LastWeaponSwitch = tick()
                             end
-                            -- Instakill sequence ทุก frame ที่อยู่ในระยะ
                             ExecuteFastAttack(tHRP)
                             CastSkills(tHRP, tHum)
                         end
@@ -512,9 +413,10 @@ local function BuildUI()
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
 
+    -- MiniBar (แสดงเสมอ)
     local MiniBar = Instance.new("Frame", ScreenGui)
-    MiniBar.Size = UDim2.new(0, 260, 0, 36)
-    MiniBar.Position = UDim2.new(0.5, -130, 0.0, 12)
+    MiniBar.Size = UDim2.new(0, 220, 0, 36)
+    MiniBar.Position = UDim2.new(0.5, -110, 0.0, 12)
     MiniBar.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
     MiniBar.BorderSizePixel = 0
     MiniBar.Active = true
@@ -532,7 +434,7 @@ local function BuildUI()
     Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
 
     local MiniLabel = Instance.new("TextLabel", MiniBar)
-    MiniLabel.Size = UDim2.new(1, -80, 1, 0)
+    MiniLabel.Size = UDim2.new(1, -70, 1, 0)
     MiniLabel.Position = UDim2.new(0, 26, 0, 0)
     MiniLabel.BackgroundTransparency = 1
     MiniLabel.TextColor3 = Color3.fromRGB(210, 210, 255)
@@ -542,8 +444,8 @@ local function BuildUI()
     MiniLabel.Text = "NONTK | IDLE"
 
     local CollapseBtn = Instance.new("TextButton", MiniBar)
-    CollapseBtn.Size = UDim2.new(0, 60, 1, -8)
-    CollapseBtn.Position = UDim2.new(1, -66, 0, 4)
+    CollapseBtn.Size = UDim2.new(0, 50, 1, -8)
+    CollapseBtn.Position = UDim2.new(1, -56, 0, 4)
     CollapseBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 45)
     CollapseBtn.TextColor3 = Color3.fromRGB(180, 200, 255)
     CollapseBtn.Font = Enum.Font.GothamBold
@@ -553,8 +455,8 @@ local function BuildUI()
 
     -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, 380, 0, 580)
-    Main.Position = UDim2.new(0.5, -190, 0.08, 0)
+    Main.Size = UDim2.new(0, 360, 0, 520)
+    Main.Position = UDim2.new(0.5, -180, 0.08, 0)
     Main.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
     Main.BorderSizePixel = 0
     Main.Active = true
@@ -579,7 +481,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = 13
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚔ NONTK BOUNTY HUNTER v81 [INSTAKILL]"
+    HeaderTitle.Text = "⚔ NONTK BOUNTY HUNTER v81"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 36, 0, 28)
@@ -609,42 +511,9 @@ local function BuildUI()
     Toggle.Text = "⏸ NONTK HUNT: OFF"
     Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 7)
 
-    -- Instakill Toggle
-    local InstakillBtn = Instance.new("TextButton", Main)
-    InstakillBtn.Size = UDim2.new(0.44, 0, 0, 28)
-    InstakillBtn.Position = UDim2.new(0.04, 0, 0, 96)
-    InstakillBtn.BackgroundColor3 = Color3.fromRGB(140, 30, 30)
-    InstakillBtn.TextColor3 = Color3.fromRGB(255, 200, 200)
-    InstakillBtn.Font = Enum.Font.GothamBold
-    InstakillBtn.TextSize = 10
-    InstakillBtn.Text = "💀 INSTAKILL: ON"
-    Instance.new("UICorner", InstakillBtn).CornerRadius = UDim.new(0, 6)
-    InstakillBtn.MouseButton1Click:Connect(function()
-        Config.InstantKill = not Config.InstantKill
-        Config.RemoteAbuse = Config.InstantKill
-        InstakillBtn.BackgroundColor3 = Config.InstantKill and Color3.fromRGB(140, 30, 30) or Color3.fromRGB(35, 35, 48)
-        InstakillBtn.Text = Config.InstantKill and "💀 INSTAKILL: ON" or "💀 INSTAKILL: OFF"
-    end)
-
-    -- Fruit Burst Toggle
-    local FruitBtn = Instance.new("TextButton", Main)
-    FruitBtn.Size = UDim2.new(0.44, 0, 0, 28)
-    FruitBtn.Position = UDim2.new(0.52, 0, 0, 96)
-    FruitBtn.BackgroundColor3 = Color3.fromRGB(30, 80, 140)
-    FruitBtn.TextColor3 = Color3.fromRGB(200, 220, 255)
-    FruitBtn.Font = Enum.Font.GothamBold
-    FruitBtn.TextSize = 10
-    FruitBtn.Text = "🍎 FRUIT BURST: ON"
-    Instance.new("UICorner", FruitBtn).CornerRadius = UDim.new(0, 6)
-    FruitBtn.MouseButton1Click:Connect(function()
-        Config.FruitBurst = not Config.FruitBurst
-        FruitBtn.BackgroundColor3 = Config.FruitBurst and Color3.fromRGB(30, 80, 140) or Color3.fromRGB(35, 35, 48)
-        FruitBtn.Text = Config.FruitBurst and "🍎 FRUIT BURST: ON" or "🍎 FRUIT BURST: OFF"
-    end)
-
     local ModeBtn = Instance.new("TextButton", Main)
-    ModeBtn.Size = UDim2.new(0.92, 0, 0, 28)
-    ModeBtn.Position = UDim2.new(0.04, 0, 0, 130)
+    ModeBtn.Size = UDim2.new(0.92, 0, 0, 30)
+    ModeBtn.Position = UDim2.new(0.04, 0, 0, 96)
     ModeBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 40)
     ModeBtn.TextColor3 = Color3.fromRGB(180, 200, 255)
     ModeBtn.Font = Enum.Font.GothamBold
@@ -655,7 +524,7 @@ local function BuildUI()
     -- Speed Slider Section
     local SpeedSection = Instance.new("Frame", Main)
     SpeedSection.Size = UDim2.new(0.92, 0, 0, 56)
-    SpeedSection.Position = UDim2.new(0.04, 0, 0, 164)
+    SpeedSection.Position = UDim2.new(0.04, 0, 0, 132)
     SpeedSection.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
     SpeedSection.BorderSizePixel = 0
     Instance.new("UICorner", SpeedSection).CornerRadius = UDim.new(0, 6)
@@ -753,7 +622,7 @@ local function BuildUI()
     -- Nearest Radar
     local NearestRadar = Instance.new("TextLabel", Main)
     NearestRadar.Size = UDim2.new(0.92, 0, 0, 40)
-    NearestRadar.Position = UDim2.new(0.04, 0, 0, 226)
+    NearestRadar.Position = UDim2.new(0.04, 0, 0, 196)
     NearestRadar.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
     NearestRadar.TextColor3 = Color3.fromRGB(120, 235, 160)
     NearestRadar.Font = Enum.Font.GothamBold
@@ -765,7 +634,7 @@ local function BuildUI()
     -- Player List
     local PlayerListFrame = Instance.new("ScrollingFrame", Main)
     PlayerListFrame.Size = UDim2.new(0.92, 0, 0, 130)
-    PlayerListFrame.Position = UDim2.new(0.04, 0, 0, 272)
+    PlayerListFrame.Position = UDim2.new(0.04, 0, 0, 242)
     PlayerListFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
     PlayerListFrame.BorderSizePixel = 0
     PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -778,7 +647,7 @@ local function BuildUI()
     -- Status Box
     local Status = Instance.new("TextLabel", Main)
     Status.Size = UDim2.new(0.92, 0, 0, 80)
-    Status.Position = UDim2.new(0.04, 0, 0, 412)
+    Status.Position = UDim2.new(0.04, 0, 0, 380)
     Status.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
     Status.TextColor3 = Color3.fromRGB(200, 220, 255)
     Status.Font = Enum.Font.Gotham
@@ -790,7 +659,7 @@ local function BuildUI()
     -- Refresh Button
     local RefreshBtn = Instance.new("TextButton", Main)
     RefreshBtn.Size = UDim2.new(0.92, 0, 0, 26)
-    RefreshBtn.Position = UDim2.new(0.04, 0, 0, 498)
+    RefreshBtn.Position = UDim2.new(0.04, 0, 0, 468)
     RefreshBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 42)
     RefreshBtn.TextColor3 = Color3.fromRGB(160, 190, 255)
     RefreshBtn.Font = Enum.Font.GothamBold
@@ -848,13 +717,7 @@ local function BuildUI()
         Config.Enabled = not Config.Enabled
         Toggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(40, 155, 85) or Color3.fromRGB(35, 35, 48)
         Toggle.Text = Config.Enabled and "▶ NONTK HUNT: ACTIVE" or "⏸ NONTK HUNT: OFF"
-        if Config.Enabled then
-            SetupHitboxExtender()
-        else
-            ClearFlightPhysics()
-            CurrentTarget = nil
-            if HitboxPart then HitboxPart:Destroy(); HitboxPart = nil end
-        end
+        if not Config.Enabled then ClearFlightPhysics(); CurrentTarget = nil end
     end)
 
     ModeBtn.MouseButton1Click:Connect(function()
@@ -888,7 +751,7 @@ local function BuildUI()
                 MiniLabel.Text = "NONTK | IDLE"
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local hp, maxHp = GetPlayerHealth(CurrentTarget)
-                MiniLabel.Text = string.format("⚔ %s | HP:%d/%d | 💀", CurrentTarget.Name, hp, maxHp)
+                MiniLabel.Text = string.format("⚔ NONTK | %s | %d/%d", CurrentTarget.Name, hp, maxHp)
             else
                 MiniLabel.Text = "🔍 NONTK Hunting... | " .. Config.FlySpeed .. " s/s"
             end
@@ -919,23 +782,20 @@ local function BuildUI()
             if nearestP and nearestP.Character and nearestP.Character:FindFirstChild("Humanoid") then
                 local lvl = GetPlayerLevel(nearestP)
                 local hp, maxHp = GetPlayerHealth(nearestP)
-                NearestRadar.Text = string.format("🎯 Nearest: %s (Lv.%d) | HP:%d/%d | %dstuds", nearestP.Name, lvl, hp, maxHp, math.floor(minD))
+                NearestRadar.Text = string.format("🎯 Nearest PvP✅: %s (Lv.%d) | HP:%d/%d | %dstuds", nearestP.Name, lvl, hp, maxHp, math.floor(minD))
             else
                 NearestRadar.Text = "🎯 Nearest: No PvP-enabled players found"
             end
 
             if not Config.Enabled then
-                Status.Text = string.format("⏸ NONTK IDLE\nSpeed: %d studs/s | Mode: %s\nInstakill: %s | FruitBurst: %s",
-                    Config.FlySpeed, Config.TargetMode,
-                    Config.InstantKill and "ON" or "OFF",
-                    Config.FruitBurst and "ON" or "OFF")
+                Status.Text = string.format("⏸ NONTK IDLE\nSpeed: %d studs/s | Mode: %s\nBuso & PvP: Auto | Hunt: %s", Config.FlySpeed, Config.TargetMode, Config.AutoHunt and "ON" or "OFF")
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local lvl = GetPlayerLevel(CurrentTarget)
                 local hp, maxHp = GetPlayerHealth(CurrentTarget)
                 local dist = GetDistanceToPlayer(CurrentTarget)
                 local state = CombatTracker.HasDealtDamage and "🔴 EXECUTION MODE" or "🟡 APPROACHING"
-                Status.Text = string.format("⚔ LOCKED: %s (Lv.%d)\n%s | HP:%d/%d | Dist:%dstuds\n💀 Instakill | 🍎 FruitBurst | Mode:%s",
-                    CurrentTarget.Name, lvl, state, hp, maxHp, dist, Config.TargetMode)
+                Status.Text = string.format("⚔ LOCKED: %s (Lv.%d)\n%s | HP:%d/%d | Dist:%dstuds\nWeapon:%s | Mode:%s",
+                    CurrentTarget.Name, lvl, state, hp, maxHp, dist, Config.Weapons[CurrentWeaponIndex] or "?", Config.TargetMode)
             else
                 Status.Text = string.format("🔵 NONTK HUNTING...\nSearching PvP✅ targets (Lv.%d+)\nSpeed: %d studs/s | Blacklist: Active", Config.MinBountyLevel, Config.FlySpeed)
             end
