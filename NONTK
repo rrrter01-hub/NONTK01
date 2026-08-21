@@ -1,9 +1,12 @@
--- [[ NONTK SHADOW STALKER v100 — PURE STICKY OVERHEAD LOCK ]] --
--- Features: 100% Pure Target Lock (No Attack), Sticky Head Anchor, Velocity Matching, Master Speed Panel, Spy Cam, Universal ESP
+-- [[ NONTK GODMODE STALKER v105 — INFINITE DAMAGE STREAM & PERMA V4 ]] --
+-- Features: Sticky Overhead Lock, 15x Multi-Hit Damage Stream (Packet Injector), Fast M1 Loop, Perma Race V4, Master Speed, Spy Cam, ESP
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
@@ -18,13 +21,22 @@ local IsMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 -- [[ CONFIGURATION ]] --
 local Config = {
     Enabled = false,
-    SelectedPlayer = nil,       -- ผู้เล่นที่ล็อคเป้า
-    Spectate = false,           -- Spy Cam ดูกล้องมุมมองเป้าหมาย
-    FlySpeed = 260,             -- ความเร็วตอนพุ่งเข้าหาเป้าหมาย (50 - 350 studs/s)
-    OverheadDistance = 5,       -- ระยะห่างเหนือหัวเป้าหมาย (แนบสนิท 1 - 20 studs)
-    LookAtTarget = true,        -- หันหน้ากดลงมองเป้าหมายตลอดเวลา
+    SelectedPlayer = nil,       -- ผู้เล่นเป้าหมาย
+    Spectate = false,           -- Spy Cam
+    FlySpeed = 270,             -- ความเร็วพุ่งหาเป้าหมาย (50 - 350 studs/s)
+    OverheadDistance = 4.5,     -- ระยะแนบสนิทเหนือหัวเป้าหมาย (studs)
+    LookAtTarget = true,        -- ก้มมองหัวเป้าหมายตลอดเวลา
     
-    -- Defense / Anti-Disrupt
+    -- GODMODE DAMAGE & M1
+    DamageExploit = true,       -- เสกดาเมจต่อเนื่อง (Packet Burst Multi-Hit)
+    DamageMultiplier = 12,      -- จำนวน Hit ต่อนัด (1 - 20 Multi-Hit)
+    FastM1 = true,              -- Fast Attack M1 สแปมคลิกไร้ดีเลย์
+    AutoHaki = true,            -- เปิดฮาคิเกราะอัตโนมัติ
+    AutoKen = true,             -- เปิดฮาคิสังเกตอัตโนมัติ
+    AutoPvP = true,             -- เปิดโหมด PvP เสมอ
+    PermaRaceV4 = true,         -- เปิดเผ่า V4 ตลอดเวลา (Awakening Loop)
+    
+    -- Defense & Anti-Disrupt
     GodmodeDefense = true,
     AntiKnockback = true,
     AntiStun = true,
@@ -39,8 +51,19 @@ local Config = {
 -- Runtime Variables
 local FlightBV = nil
 local FlightBG = nil
+local CombatFramework = nil
+local ActiveController = nil
+local LastV4Tick = 0
+local LastHakiTick = 0
 local ESPObjects = {}
 local RefreshPList = nil
+
+-- Remotes Cache
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+local CommF = Remotes and Remotes:WaitForChild("CommF_", 5)
+local NetModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+local RegisterAttack = NetModule and (NetModule:FindFirstChild("RegisterAttack") or NetModule:FindFirstChild("RE/RegisterAttack"))
+local RegisterHit = NetModule and (NetModule:FindFirstChild("RegisterHit") or NetModule:FindFirstChild("RE/RegisterHit"))
 
 -- [[ HELPER FUNCTIONS ]] --
 local function SafeGetHRP(char)
@@ -86,14 +109,127 @@ local function UpdateSpectateCamera()
     end
 end
 
--- [[ STICKY GLUE PHYSICS ]] --
+-- [[ COMBAT FRAMEWORK HOOK ]] --
+local function SetupCombatHooks()
+    pcall(function()
+        local ps = LocalPlayer:FindFirstChild("PlayerScripts")
+        if ps and ps:FindFirstChild("CombatFramework") then
+            CombatFramework = require(ps.CombatFramework)
+            ActiveController = CombatFramework.activeController
+        end
+    end)
+end
+SetupCombatHooks()
+
+-- [[ PERMANENT RACE V4 AWAKENING ENGINE ]] --
+local function ForceAwakenRaceV4()
+    if not Config.PermaRaceV4 or not Character then return end
+    if tick() - LastV4Tick < 0.15 then return end
+    LastV4Tick = tick()
+
+    pcall(function()
+        local isTransformed = Character:FindFirstChild("RaceTransformed") 
+            or Character:FindFirstChild("RaceAwakening")
+            or Character:FindFirstChild("Awakened")
+            or LocalPlayer:GetAttribute("RaceAwakened") == true
+
+        if not isTransformed then
+            -- สแปมปุ่ม Y ทะลวง Awakening Meter
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
+            task.wait(0.015)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Y, false, game)
+            
+            -- ยิง Remote เผ่าเสริม
+            if CommF then
+                CommF:InvokeServer("RaceV4")
+                CommF:InvokeServer("Awaken")
+            end
+        end
+    end)
+end
+
+-- [[ BUFF & HAKI LOOP ]] --
+local function EnsureHakiAndPvP()
+    if not Character then return end
+    if tick() - LastHakiTick < 0.5 then return end
+    LastHakiTick = tick()
+
+    pcall(function()
+        if Config.AutoPvP and CommF and Character:FindFirstChild("PvPDisabled") then
+            CommF:InvokeServer("EnablePvp")
+        end
+        if Config.AutoHaki and CommF and not Character:FindFirstChild("HasBuso") then
+            CommF:InvokeServer("Buso")
+        end
+        if Config.AutoKen then
+            local kenActive = LocalPlayer:GetAttribute("KenActive") or Character:FindFirstChild("KenHaki")
+            if not kenActive then
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                task.wait(0.015)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            end
+        end
+    end)
+end
+
+-- [[ GODMODE DAMAGE EXPLOIT + FAST M1 STREAM ]] --
+local function ExecuteGodDamageStream(targetHRP)
+    if not targetHRP or not Character then return end
+
+    -- 1. Fast Combat Framework M1 Overwrite
+    pcall(function()
+        if not ActiveController then SetupCombatHooks() end
+        if ActiveController then
+            ActiveController.timeToNextAttack = 0
+            ActiveController.attacking = false
+            ActiveController.blocking = false
+            ActiveController.hitboxMagnitude = 300
+            ActiveController.increment = 4
+            
+            if Config.FastM1 and ActiveController.attack then
+                ActiveController:attack()
+            end
+            if ActiveController.bladeHit then
+                ActiveController.bladeHit(targetHRP, {targetHRP})
+            end
+        end
+    end)
+
+    -- 2. Multi-Hit Damage Injection Packets (เสกดาเมจทะลวง x12 - x20 รัวๆ)
+    if Config.DamageExploit then
+        pcall(function()
+            local hits = {}
+            for _ = 1, Config.DamageMultiplier do
+                table.insert(hits, {targetHRP.Parent, targetHRP})
+            end
+
+            if RegisterAttack then 
+                RegisterAttack:FireServer(0) 
+            end
+            if RegisterHit then 
+                RegisterHit:FireServer(targetHRP, hits) 
+            end
+        end)
+    end
+
+    -- 3. Direct Tool & Virtual Click Spam
+    if Config.FastM1 then
+        local tool = Character:FindFirstChildOfClass("Tool")
+        if tool then tool:Activate() end
+        VirtualUser:CaptureController()
+        VirtualUser:Button1Down(Vector2.zero)
+        VirtualUser:Button1Up(Vector2.zero)
+    end
+end
+
+-- [[ STICKY OVERHEAD FLIGHT PHYSICS ]] --
 local function SetupFlightPhysics()
     if not RootPart then return end
     
     if not FlightBV or FlightBV.Parent ~= RootPart then
         if FlightBV then FlightBV:Destroy() end
         FlightBV = Instance.new("BodyVelocity")
-        FlightBV.Name = "NONTK_ShadowVel"
+        FlightBV.Name = "NONTK_GodVel"
         FlightBV.Velocity = Vector3.zero
         FlightBV.MaxForce = Vector3.new(1e8, 1e8, 1e8)
         FlightBV.P = 10000
@@ -103,7 +239,7 @@ local function SetupFlightPhysics()
     if not FlightBG or FlightBG.Parent ~= RootPart then
         if FlightBG then FlightBG:Destroy() end
         FlightBG = Instance.new("BodyGyro")
-        FlightBG.Name = "NONTK_ShadowGyro"
+        FlightBG.Name = "NONTK_GodGyro"
         FlightBG.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
         FlightBG.P = 10000
         FlightBG.D = 20
@@ -118,7 +254,7 @@ local function ClearFlightPhysics()
     if Humanoid then Humanoid.PlatformStand = false end
 end
 
--- [[ ANTI-STUN & NOCLIP ]] --
+-- Anti-Stun, Noclip, Anti-Knockback
 RunService.Stepped:Connect(function()
     if (Config.Enabled or Config.GodmodeDefense) and Character then
         for _, part in ipairs(Character:GetDescendants()) do
@@ -158,11 +294,12 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     Character = char
     RootPart = char:WaitForChild("HumanoidRootPart")
     Humanoid = char:WaitForChild("Humanoid")
-    task.wait(0.2)
+    task.wait(0.25)
     SetupFlightPhysics()
+    SetupCombatHooks()
 end)
 
--- [[ PURE SHADOW GLUE TO TARGET (NO ATTACK) ]] --
+-- [[ STICKY OVERHEAD GLUE ]] --
 local function GlueDirectlyAboveHead(targetHRP)
     SetupFlightPhysics()
     if not FlightBV or not FlightBG or not RootPart or not targetHRP then return end
@@ -175,15 +312,12 @@ local function GlueDirectlyAboveHead(targetHRP)
     local delta = targetHeadPos - curPos
     local dist = delta.Magnitude
 
-    -- หันหน้าตามทิศทาง หรือก้มมองหัวเป้าหมาย
     local targetCF = Config.LookAtTarget and CFrame.lookAt(curPos, targetPos) or targetHRP.CFrame
     FlightBG.CFrame = targetCF
 
     if dist > 8 then
-        -- กำลังบินไล่ตามระยะไกล
         FlightBV.Velocity = delta.Unit * Config.FlySpeed
     else
-        -- ล็อคติดแนบสนิทเหนือหัว + ซิงค์ความเร็วตัวเท่ากับเป้าหมายเป๊ะๆ
         FlightBV.Velocity = targetVel
         RootPart.AssemblyLinearVelocity = targetVel
         RootPart.AssemblyAngularVelocity = Vector3.zero
@@ -279,14 +413,14 @@ RunService.RenderStepped:Connect(function()
                 if esp.Billboard.Parent ~= char then esp.Billboard.Parent = char end
                 if esp.Highlight.Adornee ~= char then esp.Highlight.Adornee = char end
 
-                local renderColor = isTarget and Color3.fromRGB(255, 35, 35) or Color3.fromRGB(0, 230, 150)
+                local renderColor = isTarget and Color3.fromRGB(255, 30, 30) or Color3.fromRGB(0, 230, 150)
                 esp.Highlight.Enabled = Config.ESPChams
                 esp.Highlight.FillColor = renderColor
                 esp.Billboard.Enabled = true
 
                 local dist = RootPart and math.floor((RootPart.Position - hrp.Position).Magnitude) or 0
                 esp.NameLabel.Text = string.format("%s [Lv.%d]", p.Name, GetPlayerLevel(p))
-                esp.StatusLabel.Text = isTarget and "[🎯 LOCKED SHADOW]" or "[PLAYER]"
+                esp.StatusLabel.Text = isTarget and "[⚡ GOD TARGET]" or "[PLAYER]"
                 esp.StatusLabel.TextColor3 = renderColor
                 esp.DistLabel.Text = string.format("%d studs | HP: %d/%d", dist, math.floor(hum.Health), math.floor(hum.MaxHealth))
             else
@@ -300,9 +434,15 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- [[ MAIN TRACKING LOOP ]] --
+-- [[ MAIN HIGH-SPEED COMBAT & GLUE LOOP ]] --
 RunService.Heartbeat:Connect(function()
     ApplyGodmodeDefense()
+    EnsureHakiAndPvP()
+
+    -- Perma Race V4 Awakening Loop
+    if Config.PermaRaceV4 then
+        ForceAwakenRaceV4()
+    end
 
     if not Config.Enabled or not RootPart then
         ClearFlightPhysics()
@@ -314,7 +454,6 @@ RunService.Heartbeat:Connect(function()
         local tHRP = SafeGetHRP(target.Character)
         local tHum = target.Character:FindFirstChildOfClass("Humanoid")
 
-        -- ถ้าเป้าหมายตายจริงหรือตัวหาย ถึงจะปลดล็อค
         if not tHum or tHum.Health <= 0 or not tHRP then
             Config.SelectedPlayer = nil
             ClearFlightPhysics()
@@ -322,11 +461,34 @@ RunService.Heartbeat:Connect(function()
             return
         end
 
-        -- เคลื่อนที่ล็อคติดตัวเหนือหัวตลอดเวลา
+        -- ล็อคติดแน่นเหนือหัว
         GlueDirectlyAboveHead(tHRP)
+
+        -- เสกดาเมจต่อเนื่อง + Fast M1
+        local dist = (RootPart.Position - tHRP.Position).Magnitude
+        if dist <= (Config.OverheadDistance + 45) then
+            ExecuteGodDamageStream(tHRP)
+        end
     else
         ClearFlightPhysics()
         Config.SelectedPlayer = nil
+    end
+end)
+
+-- Multi-Threaded Damage Burst Booster
+task.spawn(function()
+    while true do
+        task.wait(0.02)
+        if Config.Enabled and Config.DamageExploit and Config.SelectedPlayer and Config.SelectedPlayer.Character then
+            local tHRP = SafeGetHRP(Config.SelectedPlayer.Character)
+            local tHum = Config.SelectedPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if tHRP and tHum and tHum.Health > 0 and RootPart then
+                local dist = (RootPart.Position - tHRP.Position).Magnitude
+                if dist <= (Config.OverheadDistance + 45) then
+                    ExecuteGodDamageStream(tHRP)
+                end
+            end
+        end
     end
 end)
 
@@ -369,7 +531,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V100_SHADOW"
+    ScreenGui.Name = "NONTK_V105_GODSTREAM"
     ScreenGui.ResetOnSpawn = false
     
     local parentGui = (gethui and gethui()) or (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or LocalPlayer:WaitForChild("PlayerGui")
@@ -382,22 +544,22 @@ local function BuildUI()
     MobileFAB.BackgroundColor3 = Color3.fromRGB(15, 25, 35)
     MobileFAB.BorderSizePixel = 0
     MobileFAB.Image = "rbxassetid://6031075938"
-    MobileFAB.ImageColor3 = Color3.fromRGB(0, 240, 160)
+    MobileFAB.ImageColor3 = Color3.fromRGB(255, 45, 80)
     Instance.new("UICorner", MobileFAB).CornerRadius = UDim.new(1, 0)
     local FABStroke = Instance.new("UIStroke", MobileFAB)
-    FABStroke.Color = Color3.fromRGB(0, 220, 140)
+    FABStroke.Color = Color3.fromRGB(255, 60, 90)
     FABStroke.Thickness = 2
     EnableUniversalDrag(MobileFAB)
 
     -- Top Mini Pill
     local MiniBar = Instance.new("Frame", ScreenGui)
-    MiniBar.Size = UDim2.new(0, 260, 0, 36)
-    MiniBar.Position = UDim2.new(0.5, -130, 0.0, 12)
+    MiniBar.Size = UDim2.new(0, 270, 0, 36)
+    MiniBar.Position = UDim2.new(0.5, -135, 0.0, 12)
     MiniBar.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
     MiniBar.BorderSizePixel = 0
     Instance.new("UICorner", MiniBar).CornerRadius = UDim.new(0, 9)
     local MiniStroke = Instance.new("UIStroke", MiniBar)
-    MiniStroke.Color = Color3.fromRGB(0, 230, 140)
+    MiniStroke.Color = Color3.fromRGB(255, 50, 80)
     MiniStroke.Thickness = 1.4
     EnableUniversalDrag(MiniBar)
 
@@ -411,17 +573,17 @@ local function BuildUI()
     MiniLabel.Size = UDim2.new(1, -74, 1, 0)
     MiniLabel.Position = UDim2.new(0, 28, 0, 0)
     MiniLabel.BackgroundTransparency = 1
-    MiniLabel.TextColor3 = Color3.fromRGB(220, 240, 255)
+    MiniLabel.TextColor3 = Color3.fromRGB(255, 230, 235)
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 11
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "SHADOW v100 | NO TARGET"
+    MiniLabel.Text = "GODSTREAM v105 | IDLE"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 52, 1, -8)
     OpenBtn.Position = UDim2.new(1, -58, 0, 4)
-    OpenBtn.BackgroundColor3 = Color3.fromRGB(18, 38, 48)
-    OpenBtn.TextColor3 = Color3.fromRGB(140, 240, 190)
+    OpenBtn.BackgroundColor3 = Color3.fromRGB(48, 18, 28)
+    OpenBtn.TextColor3 = Color3.fromRGB(255, 140, 160)
     OpenBtn.Font = Enum.Font.GothamBold
     OpenBtn.TextSize = 11
     OpenBtn.Text = "▼ HUB"
@@ -429,19 +591,19 @@ local function BuildUI()
 
     -- Main Frame
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, IsMobile and 350 or 420, 0, IsMobile and 480 or 520)
-    Main.Position = UDim2.new(0.5, IsMobile and -175 or -210, 0.08, 0)
+    Main.Size = UDim2.new(0, IsMobile and 360 or 430, 0, IsMobile and 500 or 540)
+    Main.Position = UDim2.new(0.5, IsMobile and -180 or -215, 0.06, 0)
     Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     Main.BorderSizePixel = 0
     Main.Visible = false
     Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
     local MainStroke = Instance.new("UIStroke", Main)
-    MainStroke.Color = Color3.fromRGB(0, 190, 130)
+    MainStroke.Color = Color3.fromRGB(255, 45, 80)
     MainStroke.Thickness = 1.6
 
     local Header = Instance.new("Frame", Main)
     Header.Size = UDim2.new(1, 0, 0, 44)
-    Header.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
+    Header.BackgroundColor3 = Color3.fromRGB(24, 16, 20)
     Header.BorderSizePixel = 0
     Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 12)
     EnableUniversalDrag(Main, Header)
@@ -450,11 +612,11 @@ local function BuildUI()
     HeaderTitle.Size = UDim2.new(1, -50, 1, 0)
     HeaderTitle.Position = UDim2.new(0, 14, 0, 0)
     HeaderTitle.BackgroundTransparency = 1
-    HeaderTitle.TextColor3 = Color3.fromRGB(240, 255, 245)
+    HeaderTitle.TextColor3 = Color3.fromRGB(255, 240, 245)
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11.5 or 12.5
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "👥 NONTK v100 — PURE SHADOW STALKER"
+    HeaderTitle.Text = "⚡ NONTK v105 — GOD DAMAGE & PERMA V4"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -487,36 +649,36 @@ local function BuildUI()
     BodyLayout.SortOrder = Enum.SortOrder.LayoutOrder
     BodyLayout.Padding = UDim.new(0, 7)
 
-    -- Master Follow Toggle
+    -- Master Combat & Lock Toggle
     local MasterToggle = Instance.new("TextButton", ScrollBody)
     MasterToggle.Size = UDim2.new(1, 0, 0, 38)
-    MasterToggle.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
+    MasterToggle.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
     MasterToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
     MasterToggle.Font = Enum.Font.GothamBold
     MasterToggle.TextSize = 12
-    MasterToggle.Text = "⏸ SHADOW STALKER: OFF"
+    MasterToggle.Text = "⏸ GODMODE LOCK: OFF"
     Instance.new("UICorner", MasterToggle).CornerRadius = UDim.new(0, 7)
     MasterToggle.MouseButton1Click:Connect(function()
         Config.Enabled = not Config.Enabled
-        MasterToggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(0, 170, 95) or Color3.fromRGB(30, 35, 50)
-        MasterToggle.Text = Config.Enabled and "▶ SHADOW STALKER: ACTIVE" or "⏸ SHADOW STALKER: OFF"
+        MasterToggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(220, 35, 70) or Color3.fromRGB(35, 35, 45)
+        MasterToggle.Text = Config.Enabled and "▶ GODMODE LOCK & DAMAGE: ACTIVE" or "⏸ GODMODE LOCK: OFF"
         if not Config.Enabled then ClearFlightPhysics() end
     end)
 
     -- Speed Slider Card
     local SpeedCard = Instance.new("Frame", ScrollBody)
     SpeedCard.Size = UDim2.new(1, 0, 0, 108)
-    SpeedCard.BackgroundColor3 = Color3.fromRGB(16, 22, 30)
+    SpeedCard.BackgroundColor3 = Color3.fromRGB(20, 18, 24)
     Instance.new("UICorner", SpeedCard).CornerRadius = UDim.new(0, 8)
     local SpeedCardStroke = Instance.new("UIStroke", SpeedCard)
-    SpeedCardStroke.Color = Color3.fromRGB(0, 200, 140)
+    SpeedCardStroke.Color = Color3.fromRGB(255, 60, 90)
     SpeedCardStroke.Thickness = 1.2
 
     local SpeedLabel = Instance.new("TextLabel", SpeedCard)
     SpeedLabel.Size = UDim2.new(0.65, 0, 0, 22)
     SpeedLabel.Position = UDim2.new(0, 10, 0, 6)
     SpeedLabel.BackgroundTransparency = 1
-    SpeedLabel.TextColor3 = Color3.fromRGB(180, 255, 225)
+    SpeedLabel.TextColor3 = Color3.fromRGB(255, 200, 215)
     SpeedLabel.Font = Enum.Font.GothamBold
     SpeedLabel.TextSize = 11.5
     SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -525,7 +687,7 @@ local function BuildUI()
     local SpeedInputBox = Instance.new("TextBox", SpeedCard)
     SpeedInputBox.Size = UDim2.new(0, 64, 0, 22)
     SpeedInputBox.Position = UDim2.new(1, -74, 0, 6)
-    SpeedInputBox.BackgroundColor3 = Color3.fromRGB(24, 34, 45)
+    SpeedInputBox.BackgroundColor3 = Color3.fromRGB(35, 25, 30)
     SpeedInputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
     SpeedInputBox.Font = Enum.Font.GothamBold
     SpeedInputBox.TextSize = 11
@@ -535,11 +697,11 @@ local function BuildUI()
     local STrack = Instance.new("Frame", SpeedCard)
     STrack.Size = UDim2.new(0.72, 0, 0, 8)
     STrack.Position = UDim2.new(0.14, 0, 0, 40)
-    STrack.BackgroundColor3 = Color3.fromRGB(30, 45, 55)
+    STrack.BackgroundColor3 = Color3.fromRGB(45, 30, 38)
     Instance.new("UICorner", STrack).CornerRadius = UDim.new(1, 0)
 
     local SFill = Instance.new("Frame", STrack)
-    SFill.BackgroundColor3 = Color3.fromRGB(0, 220, 140)
+    SFill.BackgroundColor3 = Color3.fromRGB(255, 45, 80)
     SFill.BorderSizePixel = 0
     SFill.Size = UDim2.new((Config.FlySpeed - 50) / 300, 0, 1, 0)
     Instance.new("UICorner", SFill).CornerRadius = UDim.new(1, 0)
@@ -547,7 +709,7 @@ local function BuildUI()
     local SKnob = Instance.new("TextButton", STrack)
     SKnob.Size = UDim2.new(0, 18, 0, 18)
     SKnob.Position = UDim2.new((Config.FlySpeed - 50) / 300, -9, 0.5, -9)
-    SKnob.BackgroundColor3 = Color3.fromRGB(140, 255, 190)
+    SKnob.BackgroundColor3 = Color3.fromRGB(255, 140, 160)
     SKnob.Text = ""
     Instance.new("UICorner", SKnob).CornerRadius = UDim.new(1, 0)
 
@@ -584,7 +746,7 @@ local function BuildUI()
     local BtnMinusSpeed = Instance.new("TextButton", SpeedCard)
     BtnMinusSpeed.Size = UDim2.new(0, 26, 0, 24)
     BtnMinusSpeed.Position = UDim2.new(0, 8, 0, 32)
-    BtnMinusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 65)
+    BtnMinusSpeed.BackgroundColor3 = Color3.fromRGB(55, 35, 45)
     BtnMinusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
     BtnMinusSpeed.Font = Enum.Font.GothamBold
     BtnMinusSpeed.TextSize = 14
@@ -598,7 +760,7 @@ local function BuildUI()
     local BtnPlusSpeed = Instance.new("TextButton", SpeedCard)
     BtnPlusSpeed.Size = UDim2.new(0, 26, 0, 24)
     BtnPlusSpeed.Position = UDim2.new(1, -34, 0, 32)
-    BtnPlusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 65)
+    BtnPlusSpeed.BackgroundColor3 = Color3.fromRGB(55, 35, 45)
     BtnPlusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
     BtnPlusSpeed.Font = Enum.Font.GothamBold
     BtnPlusSpeed.TextSize = 14
@@ -612,15 +774,15 @@ local function BuildUI()
     local Presets = {
         {Name = "150", Speed = 150},
         {Name = "220", Speed = 220},
-        {Name = "260", Speed = 260},
+        {Name = "270", Speed = 270},
         {Name = "350", Speed = 350}
     }
     for i, pData in ipairs(Presets) do
         local pBtn = Instance.new("TextButton", SpeedCard)
         pBtn.Size = UDim2.new(0.22, -4, 0, 24)
         pBtn.Position = UDim2.new((i - 1) * 0.25, 6, 0, 74)
-        pBtn.BackgroundColor3 = Color3.fromRGB(25, 40, 50)
-        pBtn.TextColor3 = Color3.fromRGB(140, 230, 200)
+        pBtn.BackgroundColor3 = Color3.fromRGB(40, 25, 35)
+        pBtn.TextColor3 = Color3.fromRGB(255, 160, 180)
         pBtn.Font = Enum.Font.GothamBold
         pBtn.TextSize = 10
         pBtn.Text = pData.Name
@@ -634,14 +796,14 @@ local function BuildUI()
     -- Overhead Height Card
     local HeightSection = Instance.new("Frame", ScrollBody)
     HeightSection.Size = UDim2.new(1, 0, 0, 36)
-    HeightSection.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
+    HeightSection.BackgroundColor3 = Color3.fromRGB(18, 16, 22)
     Instance.new("UICorner", HeightSection).CornerRadius = UDim.new(0, 6)
 
     local HeightLabel = Instance.new("TextLabel", HeightSection)
     HeightLabel.Size = UDim2.new(0.68, 0, 1, 0)
     HeightLabel.Position = UDim2.new(0, 10, 0, 0)
     HeightLabel.BackgroundTransparency = 1
-    HeightLabel.TextColor3 = Color3.fromRGB(150, 230, 255)
+    HeightLabel.TextColor3 = Color3.fromRGB(255, 180, 200)
     HeightLabel.Font = Enum.Font.GothamBold
     HeightLabel.TextSize = 10.5
     HeightLabel.TextXAlignment = Enum.TextXAlignment.Left
@@ -650,7 +812,7 @@ local function BuildUI()
     local HMinus = Instance.new("TextButton", HeightSection)
     HMinus.Size = UDim2.new(0, 24, 0, 24)
     HMinus.Position = UDim2.new(1, -54, 0.5, -12)
-    HMinus.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    HMinus.BackgroundColor3 = Color3.fromRGB(50, 35, 45)
     HMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
     HMinus.Font = Enum.Font.GothamBold
     HMinus.TextSize = 13
@@ -664,7 +826,7 @@ local function BuildUI()
     local HPlus = Instance.new("TextButton", HeightSection)
     HPlus.Size = UDim2.new(0, 24, 0, 24)
     HPlus.Position = UDim2.new(1, -26, 0.5, -12)
-    HPlus.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    HPlus.BackgroundColor3 = Color3.fromRGB(50, 35, 45)
     HPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
     HPlus.Font = Enum.Font.GothamBold
     HPlus.TextSize = 13
@@ -675,36 +837,20 @@ local function BuildUI()
         HeightLabel.Text = "📏 OVERHEAD HEIGHT: " .. Config.OverheadDistance .. " studs"
     end)
 
-    -- Spy Cam & Utilities
-    local SpectateToggleBtn = Instance.new("TextButton", ScrollBody)
-    SpectateToggleBtn.Size = UDim2.new(1, 0, 0, 32)
-    SpectateToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 30, 45)
-    SpectateToggleBtn.TextColor3 = Color3.fromRGB(140, 210, 255)
-    SpectateToggleBtn.Font = Enum.Font.GothamBold
-    SpectateToggleBtn.TextSize = 10.5
-    SpectateToggleBtn.Text = "👁️ SPECTATE SPY CAM: OFF"
-    Instance.new("UICorner", SpectateToggleBtn).CornerRadius = UDim.new(0, 6)
-    SpectateToggleBtn.MouseButton1Click:Connect(function()
-        Config.Spectate = not Config.Spectate
-        SpectateToggleBtn.BackgroundColor3 = Config.Spectate and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(20, 30, 45)
-        SpectateToggleBtn.TextColor3 = Config.Spectate and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(140, 210, 255)
-        SpectateToggleBtn.Text = Config.Spectate and "👁️ SPECTATE SPY CAM: ACTIVE" or "👁️ SPECTATE SPY CAM: OFF"
-        UpdateSpectateCamera()
-    end)
-
+    -- Status Card
     local TargetStatusCard = Instance.new("TextLabel", ScrollBody)
     TargetStatusCard.Size = UDim2.new(1, 0, 0, 52)
-    TargetStatusCard.BackgroundColor3 = Color3.fromRGB(14, 18, 24)
-    TargetStatusCard.TextColor3 = Color3.fromRGB(200, 240, 225)
+    TargetStatusCard.BackgroundColor3 = Color3.fromRGB(16, 14, 20)
+    TargetStatusCard.TextColor3 = Color3.fromRGB(255, 210, 225)
     TargetStatusCard.Font = Enum.Font.Gotham
     TargetStatusCard.TextSize = 9.5
     TargetStatusCard.TextWrapped = true
-    TargetStatusCard.Text = "Selected Target: NONE\nClick a player below to lock shadow."
+    TargetStatusCard.Text = "Selected Target: NONE\nClick a player below to lock & melt."
     Instance.new("UICorner", TargetStatusCard).CornerRadius = UDim.new(0, 6)
 
     local ClearTargetBtn = Instance.new("TextButton", ScrollBody)
     ClearTargetBtn.Size = UDim2.new(1, 0, 0, 26)
-    ClearTargetBtn.BackgroundColor3 = Color3.fromRGB(45, 25, 30)
+    ClearTargetBtn.BackgroundColor3 = Color3.fromRGB(50, 20, 25)
     ClearTargetBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
     ClearTargetBtn.Font = Enum.Font.GothamBold
     ClearTargetBtn.TextSize = 10
@@ -717,10 +863,10 @@ local function BuildUI()
         if RefreshPList then RefreshPList() end
     end)
 
-    -- Player List
+    -- Player Selection List
     local PList = Instance.new("Frame", ScrollBody)
-    PList.Size = UDim2.new(1, 0, 0, 150)
-    PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
+    PList.Size = UDim2.new(1, 0, 0, 140)
+    PList.BackgroundColor3 = Color3.fromRGB(14, 12, 18)
     Instance.new("UICorner", PList).CornerRadius = UDim.new(0, 6)
 
     local PScroll = Instance.new("ScrollingFrame", PList)
@@ -750,12 +896,12 @@ local function BuildUI()
 
                 local b = Instance.new("TextButton", PScroll)
                 b.Size = UDim2.new(1, 0, 0, 28)
-                b.BackgroundColor3 = isSelected and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(18, 22, 28)
-                b.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(160, 220, 200)
+                b.BackgroundColor3 = isSelected and Color3.fromRGB(200, 30, 60) or Color3.fromRGB(22, 18, 26)
+                b.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(220, 180, 200)
                 b.Font = Enum.Font.GothamBold
                 b.TextSize = 9.5
                 b.TextXAlignment = Enum.TextXAlignment.Left
-                b.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or "[👤]", p.Name, GetPlayerLevel(p), dist)
+                b.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[⚡ LOCKED]" or "[👤]", p.Name, GetPlayerLevel(p), dist)
                 Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
                 PButtons[p] = b
 
@@ -777,30 +923,33 @@ local function BuildUI()
     Players.PlayerAdded:Connect(RefreshPList)
     Players.PlayerRemoving:Connect(RefreshPList)
 
-    -- Toggle Utilities
-    local function AddQuickToggle(title, state, callback)
+    -- Godmode Feature Toggles
+    local function AddGodToggle(title, state, callback)
         local btn = Instance.new("TextButton", ScrollBody)
-        btn.Size = UDim2.new(1, 0, 0, 30)
-        btn.BackgroundColor3 = state and Color3.fromRGB(20, 85, 60) or Color3.fromRGB(20, 24, 30)
-        btn.TextColor3 = Color3.fromRGB(240, 255, 245)
+        btn.Size = UDim2.new(1, 0, 0, 32)
+        btn.BackgroundColor3 = state and Color3.fromRGB(150, 25, 45) or Color3.fromRGB(24, 20, 28)
+        btn.TextColor3 = Color3.fromRGB(255, 240, 245)
         btn.Font = Enum.Font.GothamBold
         btn.TextSize = 10
-        btn.Text = (state and "✅ " or "❌ ") .. title
+        btn.Text = (state and "🔥 " or "❌ ") .. title
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
         btn.MouseButton1Click:Connect(function()
             state = not state
-            btn.BackgroundColor3 = state and Color3.fromRGB(20, 85, 60) or Color3.fromRGB(20, 24, 30)
-            btn.Text = (state and "✅ " or "❌ ") .. title
+            btn.BackgroundColor3 = state and Color3.fromRGB(150, 25, 45) or Color3.fromRGB(24, 20, 28)
+            btn.Text = (state and "🔥 " or "❌ ") .. title
             callback(state)
         end)
     end
 
-    AddQuickToggle("Look Down At Target", Config.LookAtTarget, function(v) Config.LookAtTarget = v end)
-    AddQuickToggle("Anti-Stun & Anti-Ragdoll", Config.AntiStun, function(v) Config.AntiStun = v; Config.AntiRagdoll = v end)
-    AddQuickToggle("Anti-Knockback (No Fling)", Config.AntiKnockback, function(v) Config.AntiKnockback = v end)
-    AddQuickToggle("Player ESP & Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
+    AddGodToggle("Permanent Race V4 Awakening (Loop)", Config.PermaRaceV4, function(v) Config.PermaRaceV4 = v end)
+    AddGodToggle("Infinite Damage Stream (12x Multi-Hit Burst)", Config.DamageExploit, function(v) Config.DamageExploit = v end)
+    AddGodToggle("Fast M1 Attack Spam (Zero Delay)", Config.FastM1, function(v) Config.FastM1 = v end)
+    AddGodToggle("Auto Buso & Ken Haki", Config.AutoHaki, function(v) Config.AutoHaki = v; Config.AutoKen = v end)
+    AddGodToggle("Anti-Stun & Anti-Knockback Matrix", Config.AntiStun, function(v) Config.AntiStun = v; Config.AntiKnockback = v end)
+    AddGodToggle("Spy Cam (Spectate Target)", Config.Spectate, function(v) Config.Spectate = v; UpdateSpectateCamera() end)
+    AddGodToggle("Player ESP & Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
 
-    ScrollBody.CanvasSize = UDim2.new(0, 0, 0, 580)
+    ScrollBody.CanvasSize = UDim2.new(0, 0, 0, 680)
 
     -- Realtime UI Refresh
     task.spawn(function()
@@ -809,15 +958,15 @@ local function BuildUI()
             local cur = Config.SelectedPlayer
 
             if Config.Enabled and cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
-                StatusDot.BackgroundColor3 = Color3.fromRGB(0, 230, 140)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(255, 35, 70)
                 local hp, maxHp = GetPlayerHealth(cur)
-                MiniLabel.Text = string.format("🎯 SHADOWING: %s (%d/%d HP)", cur.Name, hp, maxHp)
+                MiniLabel.Text = string.format("⚡ MELTING: %s (%d/%d HP)", cur.Name, hp, maxHp)
             elseif Config.Enabled then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(255, 200, 40)
-                MiniLabel.Text = "🎯 Select Target from List"
+                MiniLabel.Text = "⚡ Select Target to Burst"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "SHADOW v100 | IDLE"
+                MiniLabel.Text = "GODSTREAM v105 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
@@ -827,19 +976,19 @@ local function BuildUI()
                     if p.Character and p.Character:FindFirstChild("HumanoidRootPart") and RootPart then
                         dist = math.floor((RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude)
                     end
-                    btn.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or "[👤]", p.Name, GetPlayerLevel(p), dist)
-                    btn.BackgroundColor3 = isSelected and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(18, 22, 28)
+                    btn.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[⚡ LOCKED]" or "[👤]", p.Name, GetPlayerLevel(p), dist)
+                    btn.BackgroundColor3 = isSelected and Color3.fromRGB(200, 30, 60) or Color3.fromRGB(22, 18, 26)
                 end
             end
 
             if not Config.Enabled then
-                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nSpeed: %d studs/s | Height: %d studs\nEnable 'SHADOW STALKER' to start following.", Config.FlySpeed, Config.OverheadDistance)
+                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nSpeed: %d studs/s | Height: %d studs\nEnable 'GODMODE LOCK' to start damage stream.", Config.FlySpeed, Config.OverheadDistance)
             elseif cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
-                local spyMsg = Config.Spectate and " | 👁️ SPY CAM: ON" or ""
-                TargetStatusCard.Text = string.format("🎯 SHADOW LOCKED: %s%s\n📍 GLUED DIRECTLY OVERHEAD | Height: %d studs\nFly Speed: %d studs/s",
-                    cur.Name, spyMsg, Config.OverheadDistance, Config.FlySpeed)
+                local v4Msg = Config.PermaRaceV4 and " | 🔥 V4 ACTIVE" or ""
+                TargetStatusCard.Text = string.format("⚡ LOCKED: %s%s\n🔴 12x DAMAGE BURST + FAST M1 | Height: %d\nFly Speed: %d studs/s",
+                    cur.Name, v4Msg, Config.OverheadDistance, Config.FlySpeed)
             else
-                TargetStatusCard.Text = string.format("🎯 STANDING BY (TARGET: NIL)\nSpeed: %d studs/s | Height: %d studs\nClick a player from the list below to shadow.", Config.FlySpeed, Config.OverheadDistance)
+                TargetStatusCard.Text = string.format("⚡ STANDING BY (TARGET: NIL)\nSpeed: %d studs/s | Height: %d studs\nSelect a player from the list below.", Config.FlySpeed, Config.OverheadDistance)
             end
         end
     end)
