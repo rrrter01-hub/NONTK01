@@ -1,5 +1,16 @@
--- [[ NONTK FORENSIC PREDATOR v110 — PVP STATUS SCANNER & GOD DAMAGE ]] --
--- Features: Real-Time PvP/SafeZone Scanner, Sticky Overhead Lock, 15x Multi-Hit Damage Stream, Fast M1, Perma Race V4, Speed Panel, Spy Cam, Forensic ESP
+-- [[ NONTK FORENSIC PREDATOR v120 — ALL-IN-ONE GOD DAMAGE & PVP PREDATOR ]] --
+-- Features: 
+-- 1. 15x Multi-Hit Damage Stream (Packet Burst)
+-- 2. Permanent Race V4 Awakening Loop
+-- 3. Sticky Overhead Shadow Lock (Velocity-Synced Glue)
+-- 4. Forensic PvP & SafeZone Radar & Chams ESP
+-- 5. Fast M1 Attack (Bypassed Delay + 300 Studs Hitbox)
+-- 6. Godmode Defense (Anti-Knockback, Anti-Stun, Anti-Ragdoll, Anti-Void, Noclip)
+-- 7. Spy Cam Drone (Spectate Viewport)
+-- 8. Master Turbo Flight (50 - 350 studs/s)
+-- 9. Auto Aim Skill Lock (Z, X, C, V Aimed Directly at Target HRP)
+-- 10. Infinite Geppo & Flash Soru (Zero Cooldown Dash)
+-- 11. Auto Server Hop (Bounty Hunter Server Swapper)
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -8,6 +19,8 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -21,32 +34,38 @@ local IsMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 -- [[ CONFIGURATION ]] --
 local Config = {
     Enabled = false,
-    SelectedPlayer = nil,       -- ผู้เล่นที่เลือก
+    SelectedPlayer = nil,       -- เป้าหมายที่ถูกเลือก
     Spectate = false,           -- Spy Cam ดูกล้องมุมมองเป้าหมาย
-    FlySpeed = 270,             -- ความเร็วบินพุ่งหาเป้าหมาย (50 - 350 studs/s)
-    OverheadDistance = 4.5,     -- ระยะแนบสนิทเหนือหัวเป้าหมาย (studs)
-    LookAtTarget = true,        -- ก้มมองหัวเป้าหมายตลอดเวลา
+    FlySpeed = 270,             -- ความเร็วการบิน (50 - 350 studs/s)
+    OverheadDistance = 4.5,     -- ระยะเกาะเหนือหัวเป้าหมาย (studs)
+    LookAtTarget = true,        -- ล็อคหันหน้ามองเป้าหมายตลอดเวลา
     
     -- GODMODE COMBAT
-    DamageExploit = true,       -- เสกดาเมจต่อเนื่อง (Packet Burst Multi-Hit)
-    DamageMultiplier = 15,      -- จำนวน Hit ต่อนัด (1 - 20 Multi-Hit)
-    FastM1 = true,              -- Fast Attack M1 สแปมคลิกไร้ดีเลย์
-    AutoHaki = true,            -- เปิดฮาคิเกราะอัตโนมัติ
-    AutoKen = true,             -- เปิดฮาคิสังเกตอัตโนมัติ
-    AutoPvP = true,             -- เปิดโหมด PvP ตัวเองเสมอ
-    PermaRaceV4 = true,         -- เปิดเผ่า V4 ตลอดเวลา (Awakening Loop)
+    DamageExploit = true,       -- เสกดาเมจต่อเนื่อง 15x Multi-Hit
+    DamageMultiplier = 15,      -- ตัวคูณ Multi-Hit ต่อแพ็กเก็ต
+    FastM1 = true,              -- Fast Attack M1 ไร้คูลดาวน์
+    AutoHaki = true,            -- เปิดฮาคิเกราะ Buso
+    AutoKen = true,             -- เปิดฮาคิสังเกต Ken
+    AutoPvP = true,             -- บังคับเปิด PvP ตัวเอง
+    PermaRaceV4 = true,         -- เปิดเผ่า V4 ค้างตลอดกาล
     
-    -- Defense & Anti-Disrupt
+    -- SKILL & MOVEMENT EXPLOITS (ADDED)
+    AutoAimSkills = true,       -- ล็อคเล็งสกิล Z, X, C, V ใส่เป้าหมาย 100%
+    InfiniteGeppo = true,       -- กระโดดกลางอากาศไม่จำกัด (Skyjump/Geppo)
+    InfiniteSoru = true,        -- โซรุ/แดชไร้คูลดาวน์
+    AutoServerHop = false,      -- ย้ายเซิร์ฟเวอร์ล่า Bounty อัตโนมัติเมื่อห้องหมดเหยื่อ
+    
+    -- DEFENSE MATRIX
     GodmodeDefense = true,
     AntiKnockback = true,
     AntiStun = true,
     AntiRagdoll = true,
     AntiVoid = true,
     
-    -- Visuals ESP & Radar
+    -- VISUALS & ESP
     ESPEnabled = true,
     ESPChams = true,
-    FilterOnlyAttackable = false -- ตัวกรองแสดงเฉพาะคนที่ตีเข้า
+    FilterOnlyAttackable = false
 }
 
 -- Runtime Variables
@@ -56,6 +75,7 @@ local CombatFramework = nil
 local ActiveController = nil
 local LastV4Tick = 0
 local LastHakiTick = 0
+local LastSkillTick = 0
 local ESPObjects = {}
 local RefreshPList = nil
 
@@ -102,14 +122,6 @@ local function GetPlayerCrew(p)
     local attr = p:GetAttribute("Crew")
     if attr then return tostring(attr) end
     return ""
-end
-
-local function GetPlayerHealth(p)
-    if p and p.Character then
-        local hum = p.Character:FindFirstChildOfClass("Humanoid")
-        if hum then return math.floor(hum.Health), math.floor(hum.MaxHealth) end
-    end
-    return 0, 0
 end
 
 -- [[ FORENSIC REAL-TIME PVP & STATUS SCANNER ]] --
@@ -222,6 +234,77 @@ local function GetPlayerPvPStatus(p)
     return status
 end
 
+-- [[ AUTO SERVER HOP (BOUNTY HUNTER) ]] --
+local function ServerHop()
+    local placeId = game.PlaceId
+    local serversApi = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Desc&limit=100", tostring(placeId))
+    
+    task.spawn(function()
+        pcall(function()
+            local raw = game:HttpGet(serversApi)
+            local data = HttpService:JSONDecode(raw)
+            if data and data.data then
+                for _, server in ipairs(data.data) do
+                    if server.playing and server.maxPlayers and server.playing < server.maxPlayers and server.id ~= game.JobId then
+                        TeleportService:TeleportToPlaceInstance(placeId, server.id, LocalPlayer)
+                        break
+                    end
+                end
+            end
+        end)
+    end)
+end
+
+-- [[ INFINITE GEPPO & ZERO-COOLDOWN SORU ]] --
+UserInputService.JumpRequest:Connect(function()
+    if Config.InfiniteGeppo and Humanoid then
+        Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+        pcall(function()
+            if Character and Character:FindFirstChild("Geppo") then
+                Character.Geppo:FireServer()
+            end
+        end)
+    end
+end)
+
+UserInputService.InputBegan:Connect(function(input, gameProcessed)
+    if gameProcessed then return end
+    if Config.InfiniteSoru and input.KeyCode == Enum.KeyCode.Q then
+        pcall(function()
+            if CommF then
+                CommF:InvokeServer("Soru")
+            end
+            if RootPart then
+                RootPart.CFrame = RootPart.CFrame + (RootPart.CFrame.LookVector * 55)
+            end
+        end)
+    end
+end)
+
+-- [[ AUTO AIM SKILLS (Z, X, C, V) ]] --
+local function HookAutoAim()
+    local oldNamecall
+    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+        local method = getnamecallmethod()
+        local args = {...}
+        
+        if Config.AutoAimSkills and Config.SelectedPlayer and Config.SelectedPlayer.Character then
+            local tHRP = SafeGetHRP(Config.SelectedPlayer.Character)
+            if tHRP and (method == "FireServer" or method == "InvokeServer") then
+                for i, v in ipairs(args) do
+                    if typeof(v) == "Vector3" then
+                        args[i] = tHRP.Position
+                    elseif typeof(v) == "CFrame" then
+                        args[i] = CFrame.new(tHRP.Position)
+                    end
+                end
+            end
+        end
+        return oldNamecall(self, unpack(args))
+    end)
+end
+pcall(HookAutoAim)
+
 -- [[ SPECTATE / SPY CAM ]] --
 local function UpdateSpectateCamera()
     if Config.Spectate and Config.SelectedPlayer and Config.SelectedPlayer.Character then
@@ -325,7 +408,7 @@ local function ExecuteGodDamageStream(targetHRP)
         end
     end)
 
-    -- 2. Multi-Hit Damage Injection Packets (เสกดาเมจทะลวง x15 รวดเร็วระดับเสี้ยววินาที)
+    -- 2. Multi-Hit Damage Injection Packets (เสกดาเมจ x15)
     if Config.DamageExploit then
         pcall(function()
             local hits = {}
@@ -338,7 +421,7 @@ local function ExecuteGodDamageStream(targetHRP)
         end)
     end
 
-    -- 3. Tool Activation & Mouse Clicks
+    -- 3. Tool Click Spam
     if Config.FastM1 then
         local tool = Character:FindFirstChildOfClass("Tool")
         if tool then tool:Activate() end
@@ -602,6 +685,12 @@ RunService.Heartbeat:Connect(function()
             Config.SelectedPlayer = nil
             ClearFlightPhysics()
             if RefreshPList then RefreshPList() end
+            
+            -- If AutoServerHop is enabled and victim is dead
+            if Config.AutoServerHop then
+                task.wait(1)
+                ServerHop()
+            end
             return
         end
 
@@ -673,7 +762,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V110_FORENSIC"
+    ScreenGui.Name = "NONTK_V120_FORENSIC"
     ScreenGui.ResetOnSpawn = false
     
     local parentGui = (gethui and gethui()) or (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or LocalPlayer:WaitForChild("PlayerGui")
@@ -695,8 +784,8 @@ local function BuildUI()
 
     -- Top Mini Pill
     local MiniBar = Instance.new("Frame", ScreenGui)
-    MiniBar.Size = UDim2.new(0, 275, 0, 36)
-    MiniBar.Position = UDim2.new(0.5, -137, 0.0, 12)
+    MiniBar.Size = UDim2.new(0, 285, 0, 36)
+    MiniBar.Position = UDim2.new(0.5, -142, 0.0, 12)
     MiniBar.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
     MiniBar.BorderSizePixel = 0
     Instance.new("UICorner", MiniBar).CornerRadius = UDim.new(0, 9)
@@ -717,13 +806,13 @@ local function BuildUI()
     MiniLabel.BackgroundTransparency = 1
     MiniLabel.TextColor3 = Color3.fromRGB(220, 240, 255)
     MiniLabel.Font = Enum.Font.GothamBold
-    MiniLabel.TextSize = 11
+    MiniLabel.TextSize = 10.5
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "FORENSIC v110 | IDLE"
+    MiniLabel.Text = "FORENSIC v120 | IDLE"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
-    OpenBtn.Size = UDim2.new(0, 52, 1, -8)
-    OpenBtn.Position = UDim2.new(1, -58, 0, 4)
+    OpenBtn.Size = UDim2.new(0, 54, 1, -8)
+    OpenBtn.Position = UDim2.new(1, -60, 0, 4)
     OpenBtn.BackgroundColor3 = Color3.fromRGB(18, 38, 48)
     OpenBtn.TextColor3 = Color3.fromRGB(140, 240, 190)
     OpenBtn.Font = Enum.Font.GothamBold
@@ -733,8 +822,8 @@ local function BuildUI()
 
     -- Main Frame
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, IsMobile and 360 or 440, 0, IsMobile and 520 or 570)
-    Main.Position = UDim2.new(0.5, IsMobile and -180 or -220, 0.05, 0)
+    Main.Size = UDim2.new(0, IsMobile and 360 or 450, 0, IsMobile and 540 or 600)
+    Main.Position = UDim2.new(0.5, IsMobile and -180 or -225, 0.05, 0)
     Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     Main.BorderSizePixel = 0
     Main.Visible = false
@@ -756,9 +845,9 @@ local function BuildUI()
     HeaderTitle.BackgroundTransparency = 1
     HeaderTitle.TextColor3 = Color3.fromRGB(240, 255, 245)
     HeaderTitle.Font = Enum.Font.GothamBold
-    HeaderTitle.TextSize = IsMobile and 11.5 or 12.5
+    HeaderTitle.TextSize = IsMobile and 11 or 12
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "🔍 NONTK v110 — PVP INSPECTOR & GOD PREDATOR"
+    HeaderTitle.Text = "⚡ NONTK v120 — PVP FORENSIC GOD MATRIX"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -868,7 +957,7 @@ local function BuildUI()
 
     -- Player Selection List
     local PList = Instance.new("Frame", ScrollBody)
-    PList.Size = UDim2.new(1, 0, 0, 150)
+    PList.Size = UDim2.new(1, 0, 0, 140)
     PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
     Instance.new("UICorner", PList).CornerRadius = UDim.new(0, 6)
 
@@ -1058,11 +1147,11 @@ local function BuildUI()
     -- Feature Toggles
     local function AddToggle(title, state, callback)
         local btn = Instance.new("TextButton", ScrollBody)
-        btn.Size = UDim2.new(1, 0, 0, 32)
+        btn.Size = UDim2.new(1, 0, 0, 30)
         btn.BackgroundColor3 = state and Color3.fromRGB(20, 95, 65) or Color3.fromRGB(24, 20, 28)
         btn.TextColor3 = Color3.fromRGB(255, 255, 255)
         btn.Font = Enum.Font.GothamBold
-        btn.TextSize = 10
+        btn.TextSize = 9.5
         btn.Text = (state and "✅ " or "❌ ") .. title
         Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
         btn.MouseButton1Click:Connect(function()
@@ -1073,15 +1162,30 @@ local function BuildUI()
         end)
     end
 
-    AddToggle("Permanent Race V4 Awakening (Loop)", Config.PermaRaceV4, function(v) Config.PermaRaceV4 = v end)
+    -- Core Features
     AddToggle("Infinite Damage Stream (15x Multi-Hit)", Config.DamageExploit, function(v) Config.DamageExploit = v end)
-    AddToggle("Fast M1 Attack Spam", Config.FastM1, function(v) Config.FastM1 = v end)
+    AddToggle("Permanent Race V4 Awakening (Loop)", Config.PermaRaceV4, function(v) Config.PermaRaceV4 = v end)
+    AddToggle("Auto Aim Skills (Z, X, C, V Lock)", Config.AutoAimSkills, function(v) Config.AutoAimSkills = v end)
+    AddToggle("Infinite Geppo & Zero-CD Soru", Config.InfiniteGeppo, function(v) Config.InfiniteGeppo = v; Config.InfiniteSoru = v end)
+    AddToggle("Auto Server Hop (When Bounty Dead)", Config.AutoServerHop, function(v) Config.AutoServerHop = v end)
+    AddToggle("Fast M1 Attack Spam (300 Studs)", Config.FastM1, function(v) Config.FastM1 = v end)
     AddToggle("Auto Buso & Ken Haki", Config.AutoHaki, function(v) Config.AutoHaki = v; Config.AutoKen = v end)
     AddToggle("Anti-Stun & Anti-Knockback Matrix", Config.AntiStun, function(v) Config.AntiStun = v; Config.AntiKnockback = v end)
     AddToggle("Spy Cam (Spectate Target)", Config.Spectate, function(v) Config.Spectate = v; UpdateSpectateCamera() end)
     AddToggle("Player ESP & Forensic Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
 
-    ScrollBody.CanvasSize = UDim2.new(0, 0, 0, 720)
+    -- Quick Server Hop Button
+    local HopBtn = Instance.new("TextButton", ScrollBody)
+    HopBtn.Size = UDim2.new(1, 0, 0, 32)
+    HopBtn.BackgroundColor3 = Color3.fromRGB(40, 30, 70)
+    HopBtn.TextColor3 = Color3.fromRGB(200, 180, 255)
+    HopBtn.Font = Enum.Font.GothamBold
+    HopBtn.TextSize = 10.5
+    HopBtn.Text = "🌐 MANUAL SERVER HOP (FIND NEW PLAYERS)"
+    Instance.new("UICorner", HopBtn).CornerRadius = UDim.new(0, 6)
+    HopBtn.MouseButton1Click:Connect(ServerHop)
+
+    ScrollBody.CanvasSize = UDim2.new(0, 0, 0, 840)
 
     -- Realtime UI Refresh Loop
     task.spawn(function()
@@ -1098,7 +1202,7 @@ local function BuildUI()
                 MiniLabel.Text = "🎯 Select Player from List"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "FORENSIC v110 | IDLE"
+                MiniLabel.Text = "FORENSIC v120 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
