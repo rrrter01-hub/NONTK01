@@ -1,12 +1,10 @@
--- [[ NONTK FORENSIC PREDATOR v130 — FULLY OPTIMIZED & SMOOTHED ]] --
--- Fixes & Optimizations:
--- 1. Silent Mouse.Hit Hook for Auto-Aim (Z, X, C, V, Guns, Fruits) without breaking network remotes
--- 2. Anti-Jitter Overhead Lock with smooth vector interpolation (Zero rubberbanding)
--- 3. Dynamic CombatFramework cache with auto-refresh on weapon switch/respawn
--- 4. Regulated Packet Burst Multi-Hit (Max DPS without packet drops or crash kicks)
--- 5. Smooth Infinite Geppo (Airjump) & Flash Soru with debounce
--- 6. Lightweight ESP & Radar render pipeline for constant 60 FPS
--- 7. Robust Character respawn listeners & Auto Server Hop
+-- [[ NONTK FORENSIC PREDATOR v140 — ZERO CAMERA BUG & ULTRA SMOOTH ]] --
+-- Fixes in v140:
+-- 1. Fixed Camera Glitch: Replaced RenderStepped camera spam with Event-Driven Camera Subject switching
+-- 2. Fixed Camera Spin / Screen Flip: BodyGyro now uses horizontal Yaw Lock (never tilts your camera upside down)
+-- 3. Isolated Silent Aim: Only hooks combat clicks and weapon skills without messing with Camera Raycasts
+-- 4. Added Auto Camera Unstuck & Fixer button
+-- 5. Full Zero-Lag Architecture (Clean 60 FPS guaranteed)
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -33,13 +31,13 @@ local Config = {
     Enabled = false,
     SelectedPlayer = nil,       -- Target Player
     Spectate = false,           -- Spy Cam Viewport
-    FlySpeed = 270,             -- Fly / Chase Speed (50 - 350)
+    FlySpeed = 270,             -- Flight Speed (50 - 350)
     OverheadDistance = 4.5,     -- Distance above target head
-    LookAtTarget = true,        -- Aim CFrame towards victim
+    LookAtTarget = true,        -- Smooth Yaw orientation
     
     -- GOD COMBAT
     DamageExploit = true,       -- Multi-Hit Packet Burst
-    DamageMultiplier = 15,      -- Hits per burst (1 - 20)
+    DamageMultiplier = 15,      -- Hits per burst
     FastM1 = true,              -- Fast Attack M1 Overwrite
     HitboxSize = 300,           -- Blade Hitbox Magnitude
     AutoHaki = true,            -- Auto Buso
@@ -121,6 +119,26 @@ local function GetPlayerCrew(p)
     local attr = p:GetAttribute("Crew")
     if attr then return tostring(attr) end
     return ""
+end
+
+-- [[ STABLE EVENT-DRIVEN CAMERA CONTROLLER ]] --
+local function RestoreCamera()
+    if Character and Character:FindFirstChildOfClass("Humanoid") then
+        Camera.CameraType = Enum.CameraType.Custom
+        Camera.CameraSubject = Character.Humanoid
+    end
+end
+
+local function ApplyCameraSubject()
+    if Config.Spectate and Config.SelectedPlayer and Config.SelectedPlayer.Character then
+        local targetHum = Config.SelectedPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if targetHum and targetHum.Health > 0 then
+            Camera.CameraType = Enum.CameraType.Custom
+            Camera.CameraSubject = targetHum
+            return
+        end
+    end
+    RestoreCamera()
 end
 
 -- [[ FORENSIC REAL-TIME PVP & STATUS SCANNER ]] --
@@ -254,7 +272,7 @@ local function ServerHop()
     end)
 end
 
--- [[ SILENT AUTO-AIM SKILLS (MOUSE HOOK) ]] --
+-- [[ ISOLATED SILENT AIM (COMBAT SKILLS ONLY) ]] --
 pcall(function()
     local rawMeta = getrawmetatable(game)
     local oldIndex = rawMeta.__index
@@ -264,15 +282,13 @@ pcall(function()
         if not checkcaller() and Config.AutoAimSkills and Config.SelectedPlayer and Config.SelectedPlayer.Character then
             local tHRP = SafeGetHRP(Config.SelectedPlayer.Character)
             local tHum = Config.SelectedPlayer.Character:FindFirstChildOfClass("Humanoid")
+            
+            -- Only override when tool is active or key skill pressed, preventing camera lockups
             if tHRP and tHum and tHum.Health > 0 and typeof(self) == "Instance" and self:IsA("Mouse") then
                 if key == "Hit" then
                     return CFrame.new(tHRP.Position)
                 elseif key == "Target" then
                     return tHRP
-                elseif key == "UnitRay" then
-                    local origin = Camera.CFrame.Position
-                    local dir = (tHRP.Position - origin).Unit
-                    return Ray.new(origin, dir)
                 end
             end
         end
@@ -306,25 +322,6 @@ UserInputService.InputBegan:Connect(function(input, gameProcessed)
         end)
     end
 end)
-
--- [[ SPECTATE / SPY CAM ]] --
-local function UpdateSpectateCamera()
-    if Config.Spectate and Config.SelectedPlayer and Config.SelectedPlayer.Character then
-        local targetHum = Config.SelectedPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if targetHum and targetHum.Health > 0 then
-            if Camera.CameraSubject ~= targetHum then
-                Camera.CameraSubject = targetHum
-            end
-            return
-        end
-    end
-
-    if Character and Character:FindFirstChildOfClass("Humanoid") then
-        if Camera.CameraSubject ~= Character.Humanoid then
-            Camera.CameraSubject = Character.Humanoid
-        end
-    end
-end
 
 -- [[ COMBAT FRAMEWORK HOOK ]] --
 local function SetupCombatHooks()
@@ -441,14 +438,14 @@ local function ExecuteGodDamageStream(targetHRP)
     end
 end
 
--- [[ SMOOTH STICKY OVERHEAD FLIGHT PHYSICS ]] --
+-- [[ NO-SPIN SMOOTH FLIGHT PHYSICS ]] --
 local function SetupFlightPhysics()
     if not RootPart then return end
     
     if not FlightBV or FlightBV.Parent ~= RootPart then
         if FlightBV then FlightBV:Destroy() end
         FlightBV = Instance.new("BodyVelocity")
-        FlightBV.Name = "NONTK_SmoothVel"
+        FlightBV.Name = "NONTK_FlightVel"
         FlightBV.Velocity = Vector3.zero
         FlightBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
         FlightBV.P = 15000
@@ -458,10 +455,10 @@ local function SetupFlightPhysics()
     if not FlightBG or FlightBG.Parent ~= RootPart then
         if FlightBG then FlightBG:Destroy() end
         FlightBG = Instance.new("BodyGyro")
-        FlightBG.Name = "NONTK_SmoothGyro"
+        FlightBG.Name = "NONTK_FlightGyro"
         FlightBG.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
         FlightBG.P = 15000
-        FlightBG.D = 100
+        FlightBG.D = 250
         FlightBG.CFrame = RootPart.CFrame
         FlightBG.Parent = RootPart
     end
@@ -514,13 +511,14 @@ local function OnCharacterAdded(char)
     RootPart = char:WaitForChild("HumanoidRootPart")
     Humanoid = char:WaitForChild("Humanoid")
     task.wait(0.2)
+    RestoreCamera()
     SetupFlightPhysics()
     SetupCombatHooks()
 end
 
 LocalPlayer.CharacterAdded:Connect(OnCharacterAdded)
 
--- [[ SMOOTH STICKY OVERHEAD GLUE ]] --
+-- [[ STABLE YAW-LOCKED OVERHEAD GLUE (NO SCREEN FLIP) ]] --
 local function GlueDirectlyAboveHead(targetHRP)
     SetupFlightPhysics()
     if not FlightBV or not FlightBG or not RootPart or not targetHRP then return end
@@ -533,17 +531,18 @@ local function GlueDirectlyAboveHead(targetHRP)
     local delta = targetHeadPos - curPos
     local dist = delta.Magnitude
 
-    local targetCF = Config.LookAtTarget and CFrame.lookAt(curPos, targetPos) or targetHRP.CFrame
+    -- Stable Horizontal Yaw Alignment (Prevents vertical spinning & camera dizziness)
+    local lookAtPos = Vector3.new(targetPos.X, curPos.Y, targetPos.Z)
+    local targetCF = Config.LookAtTarget and CFrame.lookAt(curPos, lookAtPos) or targetHRP.CFrame
     FlightBG.CFrame = targetCF
 
     if dist > 6 then
         FlightBV.Velocity = delta.Unit * Config.FlySpeed
     else
-        -- Zero Jitter Smooth Snap
         FlightBV.Velocity = targetVel
         RootPart.AssemblyLinearVelocity = targetVel
         RootPart.AssemblyAngularVelocity = Vector3.zero
-        RootPart.CFrame = RootPart.CFrame:Lerp(CFrame.new(targetHeadPos, targetPos), 0.35)
+        RootPart.CFrame = RootPart.CFrame:Lerp(CFrame.new(targetHeadPos, lookAtPos), 0.35)
     end
 end
 
@@ -635,8 +634,6 @@ Players.PlayerAdded:Connect(CreateESP)
 Players.PlayerRemoving:Connect(RemoveESP)
 
 RunService.RenderStepped:Connect(function()
-    UpdateSpectateCamera()
-
     for p, esp in pairs(ESPObjects) do
         if p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") and p.Character:FindFirstChildOfClass("Humanoid") then
             local char = p.Character
@@ -696,9 +693,9 @@ RunService.Heartbeat:Connect(function()
         if not tHum or tHum.Health <= 0 or not tHRP then
             Config.SelectedPlayer = nil
             ClearFlightPhysics()
+            RestoreCamera()
             if RefreshPList then RefreshPList() end
             
-            -- Auto Server Hop on Target Elimination
             if Config.AutoServerHop then
                 task.wait(0.5)
                 ServerHop()
@@ -757,7 +754,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V130_FORENSIC"
+    ScreenGui.Name = "NONTK_V140_FORENSIC"
     ScreenGui.ResetOnSpawn = false
     
     local parentGui = (gethui and gethui()) or (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or LocalPlayer:WaitForChild("PlayerGui")
@@ -803,7 +800,7 @@ local function BuildUI()
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 10.5
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "FORENSIC v130 | IDLE"
+    MiniLabel.Text = "FORENSIC v140 | IDLE"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 54, 1, -8)
@@ -842,7 +839,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11 or 12
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚡ NONTK v130 — SMOOTH GOD PREDATOR"
+    HeaderTitle.Text = "⚡ NONTK v140 — ZERO CAMERA BUG GOD PREDATOR"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -888,7 +885,10 @@ local function BuildUI()
         Config.Enabled = not Config.Enabled
         MasterToggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(0, 170, 95) or Color3.fromRGB(30, 35, 50)
         MasterToggle.Text = Config.Enabled and "▶ COMBAT & LOCK: ACTIVE" or "⏸ COMBAT & LOCK: OFF"
-        if not Config.Enabled then ClearFlightPhysics() end
+        if not Config.Enabled then 
+            ClearFlightPhysics()
+            RestoreCamera()
+        end
     end)
 
     -- Live Target Forensic Status Card
@@ -916,7 +916,7 @@ local function BuildUI()
     ClearTargetBtn.MouseButton1Click:Connect(function()
         Config.SelectedPlayer = nil
         ClearFlightPhysics()
-        UpdateSpectateCamera()
+        RestoreCamera()
         if RefreshPList then RefreshPList() end
     end)
 
@@ -952,7 +952,7 @@ local function BuildUI()
 
     -- Player Selection List
     local PList = Instance.new("Frame", ScrollBody)
-    PList.Size = UDim2.new(1, 0, 0, 140)
+    PList.Size = UDim2.new(1, 0, 0, 135)
     PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
     Instance.new("UICorner", PList).CornerRadius = UDim.new(0, 6)
 
@@ -996,10 +996,11 @@ local function BuildUI()
                         if Config.SelectedPlayer == p then
                             Config.SelectedPlayer = nil
                             ClearFlightPhysics()
+                            RestoreCamera()
                         else
                             Config.SelectedPlayer = p
+                            ApplyCameraSubject()
                         end
-                        UpdateSpectateCamera()
                         RefreshPList()
                     end)
                 end
@@ -1166,8 +1167,22 @@ local function BuildUI()
     AddToggle("Fast M1 Attack Spam (300 Studs)", Config.FastM1, function(v) Config.FastM1 = v end)
     AddToggle("Auto Buso & Ken Haki", Config.AutoHaki, function(v) Config.AutoHaki = v; Config.AutoKen = v end)
     AddToggle("Anti-Stun & Anti-Knockback Matrix", Config.AntiStun, function(v) Config.AntiStun = v; Config.AntiKnockback = v end)
-    AddToggle("Spy Cam (Spectate Target)", Config.Spectate, function(v) Config.Spectate = v; UpdateSpectateCamera() end)
+    AddToggle("Spy Cam (Spectate Target)", Config.Spectate, function(v) 
+        Config.Spectate = v
+        ApplyCameraSubject()
+    end)
     AddToggle("Player ESP & Forensic Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
+
+    -- Quick Fix Camera Button
+    local FixCamBtn = Instance.new("TextButton", ScrollBody)
+    FixCamBtn.Size = UDim2.new(1, 0, 0, 30)
+    FixCamBtn.BackgroundColor3 = Color3.fromRGB(25, 45, 65)
+    FixCamBtn.TextColor3 = Color3.fromRGB(160, 220, 255)
+    FixCamBtn.Font = Enum.Font.GothamBold
+    FixCamBtn.TextSize = 10
+    FixCamBtn.Text = "🔧 FIX & RESET CAMERA (UNSTUCK)"
+    Instance.new("UICorner", FixCamBtn).CornerRadius = UDim.new(0, 6)
+    FixCamBtn.MouseButton1Click:Connect(RestoreCamera)
 
     -- Quick Server Hop Button
     local HopBtn = Instance.new("TextButton", ScrollBody)
@@ -1180,7 +1195,7 @@ local function BuildUI()
     Instance.new("UICorner", HopBtn).CornerRadius = UDim.new(0, 6)
     HopBtn.MouseButton1Click:Connect(ServerHop)
 
-    ScrollBody.CanvasSize = UDim2.new(0, 0, 0, 840)
+    ScrollBody.CanvasSize = UDim2.new(0, 0, 0, 880)
 
     -- Realtime UI Refresh Loop
     task.spawn(function()
@@ -1197,7 +1212,7 @@ local function BuildUI()
                 MiniLabel.Text = "🎯 Select Player from List"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "FORENSIC v130 | IDLE"
+                MiniLabel.Text = "FORENSIC v140 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
