@@ -1,5 +1,5 @@
--- [[ NONTK BOUNTY HUNTER v89 — PC & MOBILE CROSS-PLATFORM ]] --
--- Features: Desync Godmode / Anti-Stun / Auto-Escape, Mobile Touch + PC Drag, Real-time State Inspector, Full ESP
+-- [[ NONTK BOUNTY HUNTER v90 ULTIMATE ]] --
+-- Features: 300+ studs/s Turbo Glide, Auto Server Hop Loop, Desync Godmode, Mobile/PC Crossplay Hub
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -10,7 +10,6 @@ local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
 local TeleportService = game:GetService("TeleportService")
 local HttpService = game:GetService("HttpService")
-local GuiService = game:GetService("GuiService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -21,17 +20,27 @@ local Humanoid = Character:WaitForChild("Humanoid")
 
 local IsMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
+-- [[ AUTO RE-EXECUTE ON TELEPORT ]] --
+pcall(function()
+    local queue = queue_on_teleport or (syn and syn.queue_on_teleport) or (fluxus and fluxus.queue_on_teleport)
+    if queue then
+        queue([[
+            repeat task.wait() until game:IsLoaded() and game.Players.LocalPlayer
+            task.wait(2)
+        ]])
+    end
+end)
+
 -- [[ CONFIG ]] --
 local Config = {
-    -- Combat & Hunt
     Enabled = false,
     AutoHunt = true,
-    TargetMode = "Auto",       -- "Auto" (Attackable Filter) or "Manual"
+    TargetMode = "Auto",
     SelectedPlayer = nil,
     MinBountyLevel = 20,
-    OverheadDistance = 12,     -- ความสูงเหนือหัวเป้าหมาย (studs)
+    OverheadDistance = 12,
     LockTolerance = 16,
-    FlySpeed = 170,
+    FlySpeed = 260,
     FastAttack = true,
     AutoHaki = true,
     AutoKen = true,
@@ -39,18 +48,21 @@ local Config = {
     SkillSpam = true,
     Skills = {"Z", "X", "C", "V"},
     Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.35,
+    WeaponSwitchDelay = 0.32,
     DamageTestTime = 0.65,
-    BlacklistTime = 45,
-    AutoServerHop = false,
+    BlacklistTime = 40,
+    
+    -- Auto Server Hop
+    AutoServerHop = true,
+    HopDelayWhenEmpty = 2.5,
     
     -- Godmode / Desync Defense
-    GodmodeDefense = true,     -- ระบบป้องกันตัวกึ่งอมตะ (Anti-Stun / Knockback Cancel)
-    AntiKnockback = true,      -- ยกเลิกแรงกระเด็น 100%
-    AntiStun = true,           -- ปลดสตั้น / เดินได้ตลอดเวลา
-    AutoEscapeLowHP = true,    -- หลบขึ้นฟ้าอัตโนมัติเมื่อเลือดต่ำกว่า 25% (กันตาย 100%)
+    GodmodeDefense = true,
+    AntiKnockback = true,
+    AntiStun = true,
+    AutoEscapeLowHP = true,
     EscapeHPPercent = 25,
-    AntiVoid = true,           -- กันตกน้ำ/ตกแมพ
+    AntiVoid = true,
     
     -- Visuals ESP
     ESPEnabled = true,
@@ -67,6 +79,8 @@ local CurrentWeaponIndex = 1
 local BlacklistedTargets = {}
 local ESPObjects = {}
 local IsEscaping = false
+local IsHopping = false
+local NoTargetTimer = 0
 
 local CombatTracker = {
     Player = nil,
@@ -251,11 +265,45 @@ local function GetBestAttackableTarget()
     return bestTarget
 end
 
+-- [[ AUTO SERVER HOPPING SYSTEM ]] --
+local function ExecuteSmartServerHop()
+    if IsHopping then return end
+    IsHopping = true
+
+    local placeId = game.PlaceId
+    local req = request or http_request or (syn and syn.request) or (http and http.request)
+    
+    if req then
+        pcall(function()
+            local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Desc&excludeFullGames=true&limit=100", tostring(placeId))
+            local res = req({Url = url, Method = "GET"})
+            if res and res.Body then
+                local data = HttpService:JSONDecode(res.Body)
+                if data and data.data then
+                    local targetServers = {}
+                    for _, s in ipairs(data.data) do
+                        if s.playing and s.maxPlayers and s.playing < s.maxPlayers and s.playing >= 5 and s.id ~= game.JobId then
+                            table.insert(targetServers, s.id)
+                        end
+                    end
+
+                    if #targetServers > 0 then
+                        local chosen = targetServers[math.random(1, #targetServers)]
+                        TeleportService:TeleportToPlaceInstance(placeId, chosen, LocalPlayer)
+                        return
+                    end
+                end
+            end
+        end)
+    end
+    
+    TeleportService:Teleport(placeId, LocalPlayer)
+end
+
 -- [[ GODMODE & DEFENSE ENGINE ]] --
 local function ApplyGodmodeDefense()
     if not Character or not Humanoid or not RootPart then return end
     
-    -- 1. Anti-Stun & Anti-Ragdoll (เคลื่อนไหวได้ตลอดเวลา ไม่ติดสถานะล้ม)
     if Config.AntiStun then
         Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
         Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
@@ -263,29 +311,26 @@ local function ApplyGodmodeDefense()
         if Humanoid.Sit then Humanoid.Sit = false end
     end
 
-    -- 2. Anti-Knockback (ลบล้างแรงผลัก/แรงกระแทกจากสกิลศัตรู)
     if Config.AntiKnockback and RootPart then
         local vel = RootPart.AssemblyLinearVelocity
-        if vel.Magnitude > 220 then
-            RootPart.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        if vel.Magnitude > 240 then
+            RootPart.AssemblyLinearVelocity = Vector3.zero
         end
     end
 
-    -- 3. Anti-Void / Anti-Water Drown (กันตกแมพหรือจมน้ำตาย)
-    if Config.AntiVoid and RootPart.Position.Y < -50 then
-        RootPart.CFrame = CFrame.new(RootPart.Position.X, 120, RootPart.Position.Z)
+    if Config.AntiVoid and RootPart.Position.Y < -40 then
+        RootPart.CFrame = CFrame.new(RootPart.Position.X, 130, RootPart.Position.Z)
         RootPart.AssemblyLinearVelocity = Vector3.zero
     end
 
-    -- 4. Auto-Escape Godmode (บินหนีขึ้นฟ้าสู่ Safe Altitude เมื่อเลือดต่ำกว่า 25%)
     if Config.AutoEscapeLowHP and Humanoid.Health > 0 then
         local hpPct = (Humanoid.Health / math.max(1, Humanoid.MaxHealth)) * 100
         if hpPct <= Config.EscapeHPPercent then
             IsEscaping = true
             if FlightBodyVelocity then
-                FlightBodyVelocity.Velocity = Vector3.new(0, 200, 0)
+                FlightBodyVelocity.Velocity = Vector3.new(0, 220, 0)
             else
-                RootPart.CFrame = RootPart.CFrame + Vector3.new(0, 10, 0)
+                RootPart.CFrame = RootPart.CFrame + Vector3.new(0, 15, 0)
             end
         else
             IsEscaping = false
@@ -295,25 +340,25 @@ local function ApplyGodmodeDefense()
     end
 end
 
--- [[ FLIGHT & RIGID OVERHEAD ANCHOR ]] --
+-- [[ TURBO FLIGHT & RIGID OVERHEAD ANCHOR ]] --
 local function SetupFlightPhysics()
     if not RootPart then return end
     if not FlightBodyVelocity or FlightBodyVelocity.Parent ~= RootPart then
         if FlightBodyVelocity then FlightBodyVelocity:Destroy() end
         FlightBodyVelocity = Instance.new("BodyVelocity")
-        FlightBodyVelocity.Name = "NONTK_Vel"
+        FlightBodyVelocity.Name = "NONTK_TurboVel"
         FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        FlightBodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
-        FlightBodyVelocity.P = 3000
+        FlightBodyVelocity.MaxForce = Vector3.new(1e7, 1e7, 1e7)
+        FlightBodyVelocity.P = 5000
         FlightBodyVelocity.Parent = RootPart
     end
     if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
         if FlightBodyGyro then FlightBodyGyro:Destroy() end
         FlightBodyGyro = Instance.new("BodyGyro")
-        FlightBodyGyro.Name = "NONTK_Gyro"
-        FlightBodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
-        FlightBodyGyro.P = 3000
-        FlightBodyGyro.D = 40
+        FlightBodyGyro.Name = "NONTK_TurboGyro"
+        FlightBodyGyro.MaxTorque = Vector3.new(1e7, 1e7, 1e7)
+        FlightBodyGyro.P = 5000
+        FlightBodyGyro.D = 30
         FlightBodyGyro.CFrame = RootPart.CFrame
         FlightBodyGyro.Parent = RootPart
     end
@@ -332,6 +377,35 @@ RunService.Stepped:Connect(function()
         end
     end
 end)
+
+local function TurboGlideToTarget(targetHRP)
+    SetupFlightPhysics()
+    if not FlightBodyVelocity or not FlightBodyGyro or not RootPart then return end
+    
+    local targetPos = targetHRP.Position + Vector3.new(0, Config.OverheadDistance, 0)
+    local curPos = RootPart.Position
+    local delta = targetPos - curPos
+    local dist = delta.Magnitude
+
+    local lookCF = CFrame.lookAt(targetPos, targetHRP.Position)
+    FlightBodyGyro.CFrame = lookCF
+
+    if dist > Config.LockTolerance then
+        local flyDir = delta.Unit
+        FlightBodyVelocity.Velocity = flyDir * Config.FlySpeed
+
+        if dist > 80 then
+            RootPart.CFrame = RootPart.CFrame + (flyDir * (Config.FlySpeed * 0.015))
+        end
+    else
+        FlightBodyVelocity.Velocity = Vector3.zero
+        pcall(function()
+            RootPart.AssemblyLinearVelocity = Vector3.zero
+            RootPart.AssemblyAngularVelocity = Vector3.zero
+        end)
+        RootPart.CFrame = lookCF
+    end
+end
 
 local function SetupCombatHooks()
     pcall(function()
@@ -398,7 +472,7 @@ local function ExecuteFastAttack(targetHRP)
             ActiveController.timeToNextAttack = 0
             ActiveController.attacking = false
             ActiveController.blocking = false
-            ActiveController.hitboxMagnitude = 135
+            ActiveController.hitboxMagnitude = 140
             ActiveController.increment = 3
             if ActiveController.attack then ActiveController:attack() end
             if ActiveController.bladeHit then ActiveController.bladeHit(targetHRP, {targetHRP}) end
@@ -427,55 +501,6 @@ local function CastSkills(targetHRP, targetHum)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
         task.wait(0.02)
     end
-end
-
-local function GlideAndLockOverhead(targetHRP)
-    SetupFlightPhysics()
-    if not FlightBodyVelocity or not FlightBodyGyro or not RootPart then return end
-    
-    local targetPos = targetHRP.Position + Vector3.new(0, Config.OverheadDistance, 0)
-    local curPos = RootPart.Position
-    local delta = targetPos - curPos
-    local dist = delta.Magnitude
-
-    local lookCF = CFrame.lookAt(targetPos, targetHRP.Position)
-    FlightBodyGyro.CFrame = lookCF
-
-    if dist > Config.LockTolerance then
-        FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
-    else
-        FlightBodyVelocity.Velocity = Vector3.zero
-        pcall(function()
-            RootPart.AssemblyLinearVelocity = Vector3.zero
-            RootPart.AssemblyAngularVelocity = Vector3.zero
-        end)
-        RootPart.CFrame = lookCF
-    end
-end
-
-local function HopServer()
-    local placeId = game.PlaceId
-    local req = request or http_request or (syn and syn.request) or (http and http.request)
-    if req then
-        local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Asc&limit=100", tostring(placeId))
-        local res = req({Url = url, Method = "GET"})
-        if res and res.Body then
-            local data = HttpService:JSONDecode(res.Body)
-            if data and data.data then
-                local servers = {}
-                for _, s in ipairs(data.data) do
-                    if s.playing < s.maxPlayers and s.id ~= game.JobId then
-                        table.insert(servers, s.id)
-                    end
-                end
-                if #servers > 0 then
-                    TeleportService:TeleportToPlaceInstance(placeId, servers[math.random(1, #servers)], LocalPlayer)
-                    return
-                end
-            end
-        end
-    end
-    TeleportService:Teleport(placeId, LocalPlayer)
 end
 
 -- [[ UNIVERSAL ESP SYSTEM ]] --
@@ -601,11 +626,11 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- [[ COMBAT & GODMODE HEARTBEAT ]] --
+-- [[ COMBAT & AUTO-HOP ENGINE LOOP ]] --
 RunService.Heartbeat:Connect(function()
     ApplyGodmodeDefense()
 
-    if not Config.Enabled or not RootPart or IsEscaping then return end
+    if not Config.Enabled or not RootPart or IsEscaping or IsHopping then return end
 
     EnsurePvPAndHaki()
 
@@ -625,11 +650,16 @@ RunService.Heartbeat:Connect(function()
             CombatTracker.HasDealtDamage = false
 
             if not CurrentTarget and Config.AutoServerHop then
-                task.spawn(function()
-                    task.wait(1)
-                    if Config.Enabled and not CurrentTarget then HopServer() end
-                end)
+                NoTargetTimer = NoTargetTimer + 0.016
+                if NoTargetTimer >= Config.HopDelayWhenEmpty then
+                    NoTargetTimer = 0
+                    ExecuteSmartServerHop()
+                end
+            else
+                NoTargetTimer = 0
             end
+        else
+            NoTargetTimer = 0
         end
     end
 
@@ -638,7 +668,7 @@ RunService.Heartbeat:Connect(function()
         local tHum = CurrentTarget.Character:FindFirstChild("Humanoid")
 
         if tHum and tHum.Health > 0 then
-            GlideAndLockOverhead(tHRP)
+            TurboGlideToTarget(tHRP)
             local dist = (RootPart.Position - tHRP.Position).Magnitude
             if dist <= (Config.OverheadDistance + 15) then
                 if CombatTracker.Player ~= CurrentTarget or CombatTracker.EngagedTime == 0 then
@@ -676,11 +706,10 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- [[ UNIVERSAL TOUCH & MOUSE DRAG HELPER ]] --
+-- [[ DRAG HELPER ]] --
 local function EnableUniversalDrag(frame, dragHandle)
     dragHandle = dragHandle or frame
-    local dragging = false
-    local dragInput, dragStart, startPos
+    local dragging, dragInput, dragStart, startPos
 
     dragHandle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
@@ -689,9 +718,7 @@ local function EnableUniversalDrag(frame, dragHandle)
             startPos = frame.Position
 
             input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                end
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
@@ -715,17 +742,16 @@ local function EnableUniversalDrag(frame, dragHandle)
     end)
 end
 
--- [[ CROSSPLAY PC & MOBILE UI ]] --
+-- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V89_CROSSPLAY"
+    ScreenGui.Name = "NONTK_V90_TURBO"
     ScreenGui.ResetOnSpawn = false
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
 
-    -- 1. Mobile Floating Action Button (FAB)
+    -- Mobile FAB
     local MobileFAB = Instance.new("ImageButton", ScreenGui)
-    MobileFAB.Name = "MobileToggle"
     MobileFAB.Size = UDim2.new(0, 48, 0, 48)
     MobileFAB.Position = UDim2.new(0.04, 0, 0.25, 0)
     MobileFAB.BackgroundColor3 = Color3.fromRGB(15, 25, 35)
@@ -738,7 +764,7 @@ local function BuildUI()
     FABStroke.Thickness = 2
     EnableUniversalDrag(MobileFAB)
 
-    -- 2. Mini Floating Pill Bar
+    -- Mini Pill
     local MiniBar = Instance.new("Frame", ScreenGui)
     MiniBar.Size = UDim2.new(0, 260, 0, 36)
     MiniBar.Position = UDim2.new(0.5, -130, 0.0, 12)
@@ -764,7 +790,7 @@ local function BuildUI()
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 11
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "NONTK v89 | IDLE"
+    MiniLabel.Text = "NONTK v90 | TURBO"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 52, 1, -8)
@@ -776,9 +802,9 @@ local function BuildUI()
     OpenBtn.Text = "▼ HUB"
     Instance.new("UICorner", OpenBtn).CornerRadius = UDim.new(0, 6)
 
-    -- 3. Main Responsive Panel Container
+    -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, IsMobile and 350 or 430, 0, IsMobile and 460 or 520)
+    Main.Size = UDim2.new(0, IsMobile and 350 or 430, 0, IsMobile and 470 or 530)
     Main.Position = UDim2.new(0.5, IsMobile and -175 or -215, 0.08, 0)
     Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     Main.BorderSizePixel = 0
@@ -788,7 +814,6 @@ local function BuildUI()
     MainStroke.Color = Color3.fromRGB(0, 190, 130)
     MainStroke.Thickness = 1.6
 
-    -- Header (Drag Handle)
     local Header = Instance.new("Frame", Main)
     Header.Size = UDim2.new(1, 0, 0, 44)
     Header.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
@@ -804,7 +829,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11.5 or 13
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚔ NONTK v89 — CROSSPLAY HUNTER"
+    HeaderTitle.Text = "⚡ NONTK v90 — TURBO SPEED & AUTO HOP"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -822,12 +847,11 @@ local function BuildUI()
         Main.Visible = HubVisible
         OpenBtn.Text = HubVisible and "▲ HUB" or "▼ HUB"
     end
-
     OpenBtn.MouseButton1Click:Connect(ToggleHub)
     CloseBtn.MouseButton1Click:Connect(ToggleHub)
     MobileFAB.MouseButton1Click:Connect(ToggleHub)
 
-    -- Tab Bar
+    -- Tabs
     local TabBar = Instance.new("Frame", Main)
     TabBar.Size = UDim2.new(1, -20, 0, 32)
     TabBar.Position = UDim2.new(0, 10, 0, 50)
@@ -865,8 +889,8 @@ local function BuildUI()
     end
 
     local HuntPage = CreateTab("Hunt", "🎯", 0.0, 0.33)
-    local GodPage = CreateTab("Godmode", "🛡️", 0.33, 0.34)
-    local MiscPage = CreateTab("Config", "⚙", 0.67, 0.33)
+    local SpeedPage = CreateTab("Turbo & Hop", "🚀", 0.33, 0.34)
+    local ConfigPage = CreateTab("Config", "⚙", 0.67, 0.33)
 
     local function SwitchTab(tabName)
         for name, page in pairs(TabPages) do
@@ -914,10 +938,9 @@ local function BuildUI()
     StatusBox.Font = Enum.Font.Gotham
     StatusBox.TextSize = 9.5
     StatusBox.TextWrapped = true
-    StatusBox.Text = "Status: Scanner Standing By"
+    StatusBox.Text = "Status: Turbo Hunter Standing By"
     Instance.new("UICorner", StatusBox).CornerRadius = UDim.new(0, 6)
 
-    -- Player Selector List
     local PList = Instance.new("Frame", HuntPage)
     PList.Size = UDim2.new(1, 0, 0, 180)
     PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
@@ -970,21 +993,7 @@ local function BuildUI()
     Players.PlayerAdded:Connect(RefreshPList)
     Players.PlayerRemoving:Connect(RefreshPList)
 
-    ModeBtn.MouseButton1Click:Connect(function()
-        if Config.TargetMode == "Auto" then
-            Config.TargetMode = "Manual"
-            ModeBtn.Text = "🎯 TARGET: MANUAL (" .. (Config.SelectedPlayer and Config.SelectedPlayer.Name or "None") .. ")"
-            CurrentTarget = Config.SelectedPlayer
-        else
-            Config.TargetMode = "Auto"
-            Config.SelectedPlayer = nil
-            ModeBtn.Text = "🎯 TARGET: AUTO (ATTACKABLE ONLY)"
-            CurrentTarget = nil
-            RefreshPList()
-        end
-    end)
-
-    -- [[ TAB 2: GODMODE & DEFENSE ]] --
+    -- [[ TAB 2: TURBO SPEED & AUTO HOP ]] --
     local function AddToggle(parent, title, state, callback)
         local btn = Instance.new("TextButton", parent)
         btn.Size = UDim2.new(1, 0, 0, 34)
@@ -1002,39 +1011,93 @@ local function BuildUI()
         end)
     end
 
-    AddToggle(GodPage, "Master Godmode Defense Matrix", Config.GodmodeDefense, function(v) Config.GodmodeDefense = v end)
-    AddToggle(GodPage, "Anti-Stun & Anti-Ragdoll", Config.AntiStun, function(v) Config.AntiStun = v end)
-    AddToggle(GodPage, "Anti-Knockback (Cancel Skill Push)", Config.AntiKnockback, function(v) Config.AntiKnockback = v end)
-    AddToggle(GodPage, "Auto-Escape Sky Hover (When HP < 25%)", Config.AutoEscapeLowHP, function(v) Config.AutoEscapeLowHP = v end)
-    AddToggle(GodPage, "Anti-Void & Water Drown Shield", Config.AntiVoid, function(v) Config.AntiVoid = v end)
+    AddToggle(SpeedPage, "Auto Server Hop (When Empty)", Config.AutoServerHop, function(v) Config.AutoServerHop = v end)
 
-    -- [[ TAB 3: CONFIG & MISC ]] --
-    AddToggle(MiscPage, "Player ESP / Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
-    AddToggle(MiscPage, "Auto Server Hop (When Empty)", Config.AutoServerHop, function(v) Config.AutoServerHop = v end)
-    AddToggle(MiscPage, "Auto Buso Haki", Config.AutoHaki, function(v) Config.AutoHaki = v end)
-    AddToggle(MiscPage, "Auto Ken Haki (Instinct)", Config.AutoKen, function(v) Config.AutoKen = v end)
-    AddToggle(MiscPage, "Fast Attack Exploit", Config.FastAttack, function(v) Config.FastAttack = v end)
-    AddToggle(MiscPage, "Auto Skill Spam (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
+    local SpeedSection = Instance.new("Frame", SpeedPage)
+    SpeedSection.Size = UDim2.new(1, 0, 0, 64)
+    SpeedSection.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
+    Instance.new("UICorner", SpeedSection).CornerRadius = UDim.new(0, 6)
 
-    local HopNowBtn = Instance.new("TextButton", MiscPage)
-    HopNowBtn.Size = UDim2.new(1, 0, 0, 36)
-    HopNowBtn.BackgroundColor3 = Color3.fromRGB(40, 100, 130)
-    HopNowBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    HopNowBtn.Font = Enum.Font.GothamBold
-    HopNowBtn.TextSize = 11
-    HopNowBtn.Text = "🚀 HOP TO NEW SERVER NOW"
-    Instance.new("UICorner", HopNowBtn).CornerRadius = UDim.new(0, 6)
-    HopNowBtn.MouseButton1Click:Connect(HopServer)
+    local SpeedLabel = Instance.new("TextLabel", SpeedSection)
+    SpeedLabel.Size = UDim2.new(0.8, 0, 0, 18)
+    SpeedLabel.Position = UDim2.new(0, 10, 0, 6)
+    SpeedLabel.BackgroundTransparency = 1
+    SpeedLabel.TextColor3 = Color3.fromRGB(180, 240, 220)
+    SpeedLabel.Font = Enum.Font.GothamBold
+    SpeedLabel.TextSize = 11
+    SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SpeedLabel.Text = "🚀 TURBO FLY SPEED: " .. Config.FlySpeed .. " studs/s"
+
+    local STrack = Instance.new("Frame", SpeedSection)
+    STrack.Size = UDim2.new(0.8, 0, 0, 8)
+    STrack.Position = UDim2.new(0.1, 0, 0, 36)
+    STrack.BackgroundColor3 = Color3.fromRGB(30, 45, 50)
+    Instance.new("UICorner", STrack).CornerRadius = UDim.new(1, 0)
+
+    local SFill = Instance.new("Frame", STrack)
+    SFill.BackgroundColor3 = Color3.fromRGB(0, 220, 140)
+    SFill.BorderSizePixel = 0
+    SFill.Size = UDim2.new((Config.FlySpeed - 100) / 250, 0, 1, 0)
+    Instance.new("UICorner", SFill).CornerRadius = UDim.new(1, 0)
+
+    local SKnob = Instance.new("TextButton", STrack)
+    SKnob.Size = UDim2.new(0, 18, 0, 18)
+    SKnob.Position = UDim2.new((Config.FlySpeed - 100) / 250, -9, 0.5, -9)
+    SKnob.BackgroundColor3 = Color3.fromRGB(140, 255, 190)
+    SKnob.Text = ""
+    Instance.new("UICorner", SKnob).CornerRadius = UDim.new(1, 0)
+
+    local isDragging = false
+    SKnob.MouseButton1Down:Connect(function() isDragging = true end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            isDragging = false
+        end
+    end)
+    RunService.RenderStepped:Connect(function()
+        if isDragging then
+            local mouse = LocalPlayer:GetMouse()
+            local ratio = math.clamp((mouse.X - STrack.AbsolutePosition.X) / STrack.AbsoluteSize.X, 0, 1)
+            Config.FlySpeed = math.floor(100 + ratio * 250)
+            SFill.Size = UDim2.new(ratio, 0, 1, 0)
+            SKnob.Position = UDim2.new(ratio, -9, 0.5, -9)
+            SpeedLabel.Text = "🚀 TURBO FLY SPEED: " .. Config.FlySpeed .. " studs/s"
+        end
+    end)
+
+    local HopManualBtn = Instance.new("TextButton", SpeedPage)
+    HopManualBtn.Size = UDim2.new(1, 0, 0, 36)
+    HopManualBtn.BackgroundColor3 = Color3.fromRGB(0, 140, 180)
+    HopManualBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    HopManualBtn.Font = Enum.Font.GothamBold
+    HopManualBtn.TextSize = 11
+    HopManualBtn.Text = "⚡ FORCE SMART SERVER HOP"
+    Instance.new("UICorner", HopManualBtn).CornerRadius = UDim.new(0, 6)
+    HopManualBtn.MouseButton1Click:Connect(ExecuteSmartServerHop)
+
+    -- [[ TAB 3: CONFIG ]] --
+    AddToggle(ConfigPage, "Desync Godmode Matrix", Config.GodmodeDefense, function(v) Config.GodmodeDefense = v end)
+    AddToggle(ConfigPage, "Anti-Stun / Anti-Ragdoll", Config.AntiStun, function(v) Config.AntiStun = v end)
+    AddToggle(ConfigPage, "Anti-Knockback (Cancel Push)", Config.AntiKnockback, function(v) Config.AntiKnockback = v end)
+    AddToggle(ConfigPage, "Auto-Escape Low HP", Config.AutoEscapeLowHP, function(v) Config.AutoEscapeLowHP = v end)
+    AddToggle(ConfigPage, "Player ESP / Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
+    AddToggle(ConfigPage, "Auto Buso Haki", Config.AutoHaki, function(v) Config.AutoHaki = v end)
+    AddToggle(ConfigPage, "Auto Ken Haki", Config.AutoKen, function(v) Config.AutoKen = v end)
+    AddToggle(ConfigPage, "Fast Attack Exploit", Config.FastAttack, function(v) Config.FastAttack = v end)
+    AddToggle(ConfigPage, "Skill Spam (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
 
     HuntPage.CanvasSize = UDim2.new(0, 0, 0, 350)
-    GodPage.CanvasSize = UDim2.new(0, 0, 0, 240)
-    MiscPage.CanvasSize = UDim2.new(0, 0, 0, 320)
+    SpeedPage.CanvasSize = UDim2.new(0, 0, 0, 240)
+    ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 340)
 
     -- Realtime UI Refresh Loop
     task.spawn(function()
         while ScreenGui.Parent do
             task.wait(0.25)
-            if IsEscaping then
+            if IsHopping then
+                StatusDot.BackgroundColor3 = Color3.fromRGB(0, 180, 255)
+                MiniLabel.Text = "🚀 HOPPING SERVER..."
+            elseif IsEscaping then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(255, 220, 0)
                 MiniLabel.Text = "🛡️ ESCAPING (LOW HP)"
             elseif Config.Enabled and CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
@@ -1043,10 +1106,10 @@ local function BuildUI()
                 MiniLabel.Text = string.format("⚔ %s | %d/%d HP", CurrentTarget.Name, hp, maxHp)
             elseif Config.Enabled then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(0, 230, 140)
-                MiniLabel.Text = "🔍 Searching Attackable..."
+                MiniLabel.Text = "🔍 Turbo Searching..."
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "NONTK v89 | IDLE"
+                MiniLabel.Text = "NONTK v90 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
@@ -1057,18 +1120,21 @@ local function BuildUI()
                 end
             end
 
-            if IsEscaping then
-                StatusBox.Text = "⚠️ LOW HEALTH DETECTED!\nAscending to safe stratosphere altitude to prevent bounty loss."
+            if IsHopping then
+                StatusBox.Text = "🚀 NO TARGETS REMAINING!\nTeleporting to optimal public server with active bounty..."
+            elseif IsEscaping then
+                StatusBox.Text = "⚠️ LOW HEALTH DETECTED!\nAscending to safe sky altitude to preserve bounty."
             elseif not Config.Enabled then
-                StatusBox.Text = string.format("⏸ IDLE\nSpeed: %d studs/s | SafeHeight: %d studs\nGodmode Defense: %s | Device: %s",
-                    Config.FlySpeed, Config.OverheadDistance, Config.GodmodeDefense and "ON" or "OFF", IsMobile and "Mobile" or "PC")
+                StatusBox.Text = string.format("⏸ IDLE\nTurbo Speed: %d studs/s | Auto-Hop: %s\nDevice: %s | Overhead: %d studs",
+                    Config.FlySpeed, Config.AutoServerHop and "ON" or "OFF", IsMobile and "Mobile" or "PC", Config.OverheadDistance)
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local st = GetPlayerCombatState(CurrentTarget)
-                local stateMsg = CombatTracker.HasDealtDamage and "🔴 SAFE-EXECUTION" or "⚡ ENGAGING"
-                StatusBox.Text = string.format("⚔ TARGET: %s (Lv.%d) %s\n%s | HP: %d/%d | Dist: %d studs\nDefense: Active | Godmode: Ready",
-                    CurrentTarget.Name, st.Details.Level, st.Badge, stateMsg, st.Details.Health, st.Details.MaxHealth, st.Details.Distance)
+                local stateMsg = CombatTracker.HasDealtDamage and "🔴 SAFE-EXECUTION" or "⚡ TURBO ENGAGING"
+                StatusBox.Text = string.format("⚔ TARGET: %s (Lv.%d) %s\n%s | HP: %d/%d | Dist: %d studs\nTurbo Speed: %d studs/s",
+                    CurrentTarget.Name, st.Details.Level, st.Badge, stateMsg, st.Details.Health, st.Details.MaxHealth, st.Details.Distance, Config.FlySpeed)
             else
-                StatusBox.Text = string.format("🔵 SCANNING ATTACKABLE TARGETS...\nSkipping SafeZone, PvP-Off, Shields & Crew Mates\nSpeed: %d studs/s | ESP: Active", Config.FlySpeed)
+                StatusBox.Text = string.format("🔵 SCANNING ATTACKABLE TARGETS...\nAuto-Hop: %s (Triggers if empty)\nSpeed: %d studs/s | Anti-Rollback: Active",
+                    Config.AutoServerHop and "ENABLED" or "DISABLED", Config.FlySpeed)
             end
         end
     end)
