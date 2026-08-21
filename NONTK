@@ -1,6 +1,6 @@
--- [[ NONTK Bounty Hunter v81 FINAL — HYPER EDITION ]] --
+-- [[ NONTK Bounty Hunter v81 FINAL — HYPER EDITION / FLIGHT FIX ]] --
 -- Speed Slider, Collapsible UI, Auto Hunt Loop, Anti-Rollback 160 studs/s
--- MOD: Hyper Attack Speed + Instant Movement Physics
+-- FIX: Flight decoupled from combat loop, CastSkills non-blocking, smooth glide
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -21,7 +21,7 @@ local Config = {
     TargetMode = "Auto",
     SelectedPlayer = nil,
     MinBountyLevel = 20,
-    OverheadDistance = 7,          -- ↓ was 11, closer = faster melee connect
+    OverheadDistance = 7,
     FlySpeed = 160,
     FastAttack = true,
     AutoHaki = true,
@@ -29,11 +29,11 @@ local Config = {
     SkillSpam = true,
     Skills = {"Z", "X", "C", "V"},
     Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.2,       -- ↓ was 0.5
-    DamageTestTime = 0.4,          -- ↓ was 0.8
+    WeaponSwitchDelay = 0.2,
+    DamageTestTime = 0.4,
     BlacklistTime = 90,
     AutoHunt = true,
-    HuntInterval = 0.05            -- ↓ was 0.1
+    HuntInterval = 0.05
 }
 
 local CurrentTarget = nil
@@ -43,6 +43,7 @@ local CombatFramework = nil
 local ActiveController = nil
 local LastWeaponSwitch = 0
 local CurrentWeaponIndex = 1
+local SkillCasting = false  -- FIX: guard ให้ spawn skill แค่ครั้งเดียวต่อ cycle
 
 local BlacklistedTargets = {}
 local CombatTracker = {
@@ -93,37 +94,36 @@ local function IsPvPActive(player)
     return true
 end
 
--- HYPER: MaxForce 1e6 + P 9999 = zero-lag velocity snap
 local function SetupFlightPhysics()
     if not RootPart then return end
-    if not FlightBodyVelocity or FlightBodyVelocity.Parent ~= RootPart then
-        if FlightBodyVelocity then FlightBodyVelocity:Destroy() end
+    if not FlightBodyVelocity or not FlightBodyVelocity.Parent then
+        if FlightBodyVelocity then pcall(function() FlightBodyVelocity:Destroy() end) end
         FlightBodyVelocity = Instance.new("BodyVelocity")
         FlightBodyVelocity.Name = "NONTKGlide"
         FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        FlightBodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)   -- ↑ was 4e4
-        FlightBodyVelocity.P = 9999                                  -- ↑ was 1250
+        FlightBodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)
+        FlightBodyVelocity.P = 9999
         FlightBodyVelocity.Parent = RootPart
     end
-    if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
-        if FlightBodyGyro then FlightBodyGyro:Destroy() end
+    if not FlightBodyGyro or not FlightBodyGyro.Parent then
+        if FlightBodyGyro then pcall(function() FlightBodyGyro:Destroy() end) end
         FlightBodyGyro = Instance.new("BodyGyro")
         FlightBodyGyro.Name = "NONTKGyro"
-        FlightBodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)       -- ↑ was 4e4
-        FlightBodyGyro.P = 9999                                       -- ↑ was 1250
-        FlightBodyGyro.D = 50                                         -- ↓ was 100, less wobble
+        FlightBodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)
+        FlightBodyGyro.P = 9999
+        FlightBodyGyro.D = 50
         FlightBodyGyro.CFrame = RootPart.CFrame
         FlightBodyGyro.Parent = RootPart
     end
 end
 
 local function ClearFlightPhysics()
-    if FlightBodyVelocity then FlightBodyVelocity:Destroy(); FlightBodyVelocity = nil end
-    if FlightBodyGyro then FlightBodyGyro:Destroy(); FlightBodyGyro = nil end
+    if FlightBodyVelocity then pcall(function() FlightBodyVelocity:Destroy() end); FlightBodyVelocity = nil end
+    if FlightBodyGyro then pcall(function() FlightBodyGyro:Destroy() end); FlightBodyGyro = nil end
     if Humanoid then Humanoid.PlatformStand = false end
 end
 
--- HYPER: PreSimulation runs before physics solve = guaranteed frame-0 CanCollide off
+-- FIX: CanCollide ใน PreSimulation ไม่ iterate ซ้ำถ้า Enabled ไม่เปลี่ยน
 RunService.PreSimulation:Connect(function()
     if Config.Enabled and Character and RootPart then
         for _, part in ipairs(Character:GetDescendants()) do
@@ -136,6 +136,8 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     Character = char
     RootPart = char:WaitForChild("HumanoidRootPart")
     Humanoid = char:WaitForChild("Humanoid")
+    FlightBodyVelocity = nil  -- FIX: clear reference เก่าหลัง respawn
+    FlightBodyGyro = nil
     task.wait(0.3)
     SetupFlightPhysics()
     SetupCombatHooks()
@@ -230,40 +232,61 @@ local function ExecuteFastAttack(targetHRP)
     VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
--- HYPER: inter-key delay halved → 0.01/0.01
+-- FIX: CastSkills ไม่ block แล้ว — spawn แยก thread + guard ไม่ให้ซ้อน
 local function CastSkills(targetHRP, targetHum)
     if not Config.SkillSpam or not targetHRP or targetHum.Health <= 0 then return end
-    pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
-    for _, key in ipairs(Config.Skills) do
-        if not CurrentTarget or targetHum.Health <= 0 then break end
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
-        task.wait(0.01)   -- ↓ was 0.02
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-        task.wait(0.01)   -- ↓ was 0.03
-    end
+    if SkillCasting then return end  -- กำลัง cast อยู่แล้ว ข้ามไป
+    SkillCasting = true
+    task.spawn(function()
+        pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
+        for _, key in ipairs(Config.Skills) do
+            if not CurrentTarget or not targetHRP.Parent or targetHum.Health <= 0 then break end
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+            task.wait(0.01)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+            task.wait(0.01)
+        end
+        SkillCasting = false
+    end)
 end
 
-local function GlideToTarget(targetHRP)
+-- =============================================================
+-- FIX: GlideToTarget แยกออกมาอยู่ใน Heartbeat loop ของตัวเอง
+-- ไม่ขึ้นกับ combat loop → บินต่อเนื่องแม้ CastSkills กำลัง cast
+-- =============================================================
+RunService.Heartbeat:Connect(function()
+    if not Config.Enabled then return end
+    if not CurrentTarget then return end
+    if not CurrentTarget.Character then return end
+
+    local tHRP = CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
+    local tHum = CurrentTarget.Character:FindFirstChild("Humanoid")
+    if not tHRP or not tHum or tHum.Health <= 0 then return end
+    if not RootPart then return end
+
     SetupFlightPhysics()
     if not FlightBodyVelocity or not FlightBodyGyro then return end
-    local targetPos = targetHRP.Position + Vector3.new(0, Config.OverheadDistance, 0)
+
+    local targetPos = tHRP.Position + Vector3.new(0, Config.OverheadDistance, 0)
     local curPos = RootPart.Position
     local delta = targetPos - curPos
     local dist = delta.Magnitude
-    FlightBodyGyro.CFrame = CFrame.new(curPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
-    if dist > 10 then
-        FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
-    elseif dist > 3 then
-        -- HYPER: proportional slow-in when very close to avoid overshoot
-        FlightBodyVelocity.Velocity = delta.Unit * (Config.FlySpeed * (dist / 10))
-    else
-        FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        -- HYPER: hard snap CFrame when within melee range
-        RootPart.CFrame = CFrame.new(targetPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
-    end
-end
 
--- HUNT LOOP: 0.05s interval
+    -- FIX: หันหน้าไปหาศัตรู ไม่ tilt -90 เพราะมันทำให้ตัวละครหงายหลัง
+    FlightBodyGyro.CFrame = CFrame.new(curPos, tHRP.Position)
+
+    if dist > 6 then
+        -- บินเต็มสปีดตรงไปยัง target overhead
+        FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
+    else
+        -- อยู่ใน range แล้ว หยุดบิน
+        FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+    end
+end)
+
+-- =============================================================
+-- HUNT LOOP: scan หาเป้าหมาย
+-- =============================================================
 task.spawn(function()
     while true do
         task.wait(Config.HuntInterval)
@@ -285,25 +308,34 @@ task.spawn(function()
     end
 end)
 
--- COMBAT LOOP: 0.008s (was 0.015) = ~125 ticks/s attack polling
+-- =============================================================
+-- COMBAT LOOP: โจมตีเท่านั้น ไม่มี wait จาก skill blocking แล้ว
+-- =============================================================
 task.spawn(function()
     while true do
-        task.wait(0.008)   -- ↓ was 0.015
+        task.wait(0.008)
         if Config.Enabled then
             EnsurePvPAndHaki()
+
             if Config.TargetMode == "Manual" and Config.SelectedPlayer then
                 local p = Config.SelectedPlayer
-                if p and p.Parent and p.Character and p.Character:FindFirstChild("HumanoidRootPart") and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
+                if p and p.Parent and p.Character and p.Character:FindFirstChild("HumanoidRootPart")
+                    and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
                     CurrentTarget = p
-                else CurrentTarget = nil end
+                else
+                    CurrentTarget = nil
+                end
             end
+
             if CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("HumanoidRootPart") then
                 local tHRP = CurrentTarget.Character.HumanoidRootPart
                 local tHum = CurrentTarget.Character.Humanoid
+
                 if tHum.Health > 0 then
-                    GlideToTarget(tHRP)
                     local dist = (RootPart.Position - tHRP.Position).Magnitude
+
                     if dist <= 25 then
+                        -- Damage tracking
                         if CombatTracker.Player ~= CurrentTarget or CombatTracker.EngagedTime == 0 then
                             CombatTracker.Player = CurrentTarget
                             CombatTracker.EngagedTime = tick()
@@ -322,15 +354,18 @@ task.spawn(function()
                                 end
                             end
                         end
+
                         if CurrentTarget then
                             if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
                                 SwitchWeapon(); LastWeaponSwitch = tick()
                             end
                             ExecuteFastAttack(tHRP)
-                            CastSkills(tHRP, tHum)
+                            CastSkills(tHRP, tHum)  -- non-blocking แล้ว
                         end
                     end
-                else CurrentTarget = nil end
+                else
+                    CurrentTarget = nil
+                end
             end
         else
             ClearFlightPhysics()
@@ -347,7 +382,6 @@ local function BuildUI()
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
 
-    -- MiniBar (แสดงเสมอ)
     local MiniBar = Instance.new("Frame", ScreenGui)
     MiniBar.Size = UDim2.new(0, 220, 0, 36)
     MiniBar.Position = UDim2.new(0.5, -110, 0.0, 12)
@@ -387,7 +421,6 @@ local function BuildUI()
     CollapseBtn.Text = "▼ HUB"
     Instance.new("UICorner", CollapseBtn).CornerRadius = UDim.new(0, 5)
 
-    -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
     Main.Size = UDim2.new(0, 360, 0, 520)
     Main.Position = UDim2.new(0.5, -180, 0.08, 0)
@@ -455,7 +488,6 @@ local function BuildUI()
     ModeBtn.Text = "🎯 TARGET: AUTO (PROXIMITY FIRST)"
     Instance.new("UICorner", ModeBtn).CornerRadius = UDim.new(0, 6)
 
-    -- Speed Slider Section
     local SpeedSection = Instance.new("Frame", Main)
     SpeedSection.Size = UDim2.new(0.92, 0, 0, 56)
     SpeedSection.Position = UDim2.new(0.04, 0, 0, 132)
@@ -553,7 +585,6 @@ local function BuildUI()
         Config.FlySpeed = math.min(SpeedMax, Config.FlySpeed + 10); UpdateSlider()
     end)
 
-    -- Nearest Radar
     local NearestRadar = Instance.new("TextLabel", Main)
     NearestRadar.Size = UDim2.new(0.92, 0, 0, 40)
     NearestRadar.Position = UDim2.new(0.04, 0, 0, 196)
@@ -565,7 +596,6 @@ local function BuildUI()
     NearestRadar.Text = "🎯 Radar: Scanning..."
     Instance.new("UICorner", NearestRadar).CornerRadius = UDim.new(0, 6)
 
-    -- Player List
     local PlayerListFrame = Instance.new("ScrollingFrame", Main)
     PlayerListFrame.Size = UDim2.new(0.92, 0, 0, 130)
     PlayerListFrame.Position = UDim2.new(0.04, 0, 0, 242)
@@ -578,7 +608,6 @@ local function BuildUI()
     UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
     UIListLayout.Padding = UDim.new(0, 4)
 
-    -- Status Box
     local Status = Instance.new("TextLabel", Main)
     Status.Size = UDim2.new(0.92, 0, 0, 80)
     Status.Position = UDim2.new(0.04, 0, 0, 380)
@@ -590,7 +619,6 @@ local function BuildUI()
     Status.Text = "Status: Standing By"
     Instance.new("UICorner", Status).CornerRadius = UDim.new(0, 6)
 
-    -- Refresh Button
     local RefreshBtn = Instance.new("TextButton", Main)
     RefreshBtn.Size = UDim2.new(0.92, 0, 0, 26)
     RefreshBtn.Position = UDim2.new(0.04, 0, 0, 468)
@@ -616,7 +644,6 @@ local function BuildUI()
                 local hp, maxHp = GetPlayerHealth(p)
                 local dist = GetDistanceToPlayer(p)
                 local pvp = IsPvPActive(p) and "✅" or "❌"
-
                 local pBtn = Instance.new("TextButton", PlayerListFrame)
                 pBtn.Size = UDim2.new(0.96, 0, 0, 30)
                 pBtn.BackgroundColor3 = (Config.SelectedPlayer == p) and Color3.fromRGB(40, 120, 70) or Color3.fromRGB(22, 22, 32)
@@ -627,7 +654,6 @@ local function BuildUI()
                 pBtn.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
                 Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
                 PlayerButtons[p] = pBtn
-
                 pBtn.MouseButton1Click:Connect(function()
                     Config.SelectedPlayer = p
                     Config.TargetMode = "Manual"
@@ -668,7 +694,6 @@ local function BuildUI()
         end
     end)
 
-    -- Real-time Refresh Loop
     task.spawn(function()
         while ScreenGui.Parent do
             task.wait(0.25)
