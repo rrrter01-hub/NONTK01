@@ -1,5 +1,5 @@
--- [[ NONTK Bounty Hunter v81 FINAL ]] --
--- Speed Slider, Collapsible UI, Auto Hunt Loop, Anti-Rollback 160 studs/s
+-- [[ NONTK BOUNTY HUNTER v82 - ULTIMATE COMBAT EDITION ]] --
+-- Features: Dynamic Orbiting, Smart Combo Sequencer, True Fast Attack, Auto Buffs/Race, Emergency Escape, Full UI
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -7,6 +7,7 @@ local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
+local UserInputService = game:GetService("UserInputService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -15,48 +16,78 @@ local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local RootPart = Character:WaitForChild("HumanoidRootPart")
 local Humanoid = Character:WaitForChild("Humanoid")
 
+-- [[ Configuration ]] --
 local Config = {
     Enabled = false,
-    TargetMode = "Auto",
+    TargetMode = "Auto", -- "Auto" หรือ "Manual"
     SelectedPlayer = nil,
     MinBountyLevel = 20,
-    OverheadDistance = 11,
     FlySpeed = 160,
+    
+    -- Positioning & Anti-Counter
+    OrbitEnabled = true,
+    OrbitDistance = 14,
+    OrbitHeight = 8,
+    OrbitSpeed = 6,
+    
+    -- Combat & Attack
     FastAttack = true,
+    AttackRadius = 35,
+    FastAttackDelay = 0.05,
+    
+    -- Smart Combo Sequence
+    ComboEnabled = true,
+    ComboChain = {
+        { Category = "Melee",      Skills = {"Z", "X", "C"}, Delay = 0.22 },
+        { Category = "Sword",      Skills = {"Z", "X"},      Delay = 0.25 },
+        { Category = "Blox Fruit", Skills = {"Z", "X", "C"}, Delay = 0.30 },
+        { Category = "Gun",        Skills = {"Z", "X"},      Delay = 0.18 }
+    },
+    
+    -- Safety & Auto Buffs
     AutoHaki = true,
+    AutoObservation = true,
+    AutoRaceSkill = true,     -- กด V3 (T) / V4 (Y) อัตโนมัติเมื่อเริ่มไฟต์
     AutoPvP = true,
-    SkillSpam = true,
-    Skills = {"Z", "X", "C", "V"},
-    Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.5,
-    DamageTestTime = 0.8,
+    AutoEscape = true,
+    EscapeHealthPercent = 35, -- เลือดต่ำกว่า % นี้จะบินฉีกขึ้นฟ้าหนีทันที
+    EscapeHeight = 200,
+    
+    -- Targeting & Blacklist
+    DamageTestTime = 1.2,
     BlacklistTime = 90,
     AutoHunt = true,
     HuntInterval = 0.1
 }
 
+-- [[ Runtime Variables ]] --
 local CurrentTarget = nil
 local FlightBodyVelocity = nil
 local FlightBodyGyro = nil
 local CombatFramework = nil
 local ActiveController = nil
-local LastWeaponSwitch = 0
-local CurrentWeaponIndex = 1
+local OrbitAngle = 0
+local CurrentComboIndex = 1
+local IsExecutingCombo = false
+local LastBuffCheck = 0
 
 local BlacklistedTargets = {}
 local CombatTracker = {
     Player = nil,
     EngagedTime = 0,
     InitialHP = 0,
-    HasDealtDamage = false
+    HasDealtDamage = false,
+    IsEscaping = false
 }
 
+-- [[ Remotes ]] --
 local Remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
 local CommF = Remotes and Remotes:WaitForChild("CommF_", 5)
 local NetModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
 local RegisterAttack = NetModule and (NetModule:FindFirstChild("RegisterAttack") or NetModule:FindFirstChild("RE/RegisterAttack"))
 local RegisterHit = NetModule and (NetModule:FindFirstChild("RegisterHit") or NetModule:FindFirstChild("RE/RegisterHit"))
 
+-- [[ Helper Functions ]] --
 local function GetPlayerLevel(player)
     if not player then return 0 end
     local data = player:FindFirstChild("Data")
@@ -92,53 +123,18 @@ local function IsPvPActive(player)
     return true
 end
 
-local function SetupFlightPhysics()
-    if not RootPart then return end
-    if not FlightBodyVelocity or FlightBodyVelocity.Parent ~= RootPart then
-        if FlightBodyVelocity then FlightBodyVelocity:Destroy() end
-        FlightBodyVelocity = Instance.new("BodyVelocity")
-        FlightBodyVelocity.Name = "NONTKGlide"
-        FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        FlightBodyVelocity.MaxForce = Vector3.new(4e4, 4e4, 4e4)
-        FlightBodyVelocity.P = 1250
-        FlightBodyVelocity.Parent = RootPart
-    end
-    if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
-        if FlightBodyGyro then FlightBodyGyro:Destroy() end
-        FlightBodyGyro = Instance.new("BodyGyro")
-        FlightBodyGyro.Name = "NONTKGyro"
-        FlightBodyGyro.MaxTorque = Vector3.new(4e4, 4e4, 4e4)
-        FlightBodyGyro.P = 1250
-        FlightBodyGyro.D = 100
-        FlightBodyGyro.CFrame = RootPart.CFrame
-        FlightBodyGyro.Parent = RootPart
-    end
-end
-
-local function ClearFlightPhysics()
-    if FlightBodyVelocity then FlightBodyVelocity:Destroy(); FlightBodyVelocity = nil end
-    if FlightBodyGyro then FlightBodyGyro:Destroy(); FlightBodyGyro = nil end
-    if Humanoid then Humanoid.PlatformStand = false end
-end
-
+-- [[ Character Lifecycle & Noclip ]] --
 RunService.Stepped:Connect(function()
     if Config.Enabled and Character and RootPart then
         for _, part in ipairs(Character:GetDescendants()) do
-            if part:IsA("BasePart") then part.CanCollide = false end
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
         end
     end
 end)
 
-LocalPlayer.CharacterAdded:Connect(function(char)
-    Character = char
-    RootPart = char:WaitForChild("HumanoidRootPart")
-    Humanoid = char:WaitForChild("Humanoid")
-    task.wait(0.3)
-    SetupFlightPhysics()
-    SetupCombatHooks()
-end)
-
-function SetupCombatHooks()
+local function SetupCombatHooks()
     pcall(function()
         local ps = LocalPlayer:FindFirstChild("PlayerScripts")
         if ps and ps:FindFirstChild("CombatFramework") then
@@ -149,18 +145,43 @@ function SetupCombatHooks()
 end
 SetupCombatHooks()
 
-local function EnsurePvPAndHaki()
-    if not Character then return end
+LocalPlayer.CharacterAdded:Connect(function(char)
+    Character = char
+    RootPart = char:WaitForChild("HumanoidRootPart")
+    Humanoid = char:WaitForChild("Humanoid")
+    task.wait(0.3)
+    SetupCombatHooks()
+end)
+
+-- [[ Auto Buffs (Buso / Ken / Race V3-V4) ]] --
+local function EnsureCombatBuffs()
+    if not Character or (tick() - LastBuffCheck < 1.0) then return end
+    LastBuffCheck = tick()
     pcall(function()
-        if Config.AutoPvP and CommF then
-            if Character:FindFirstChild("PvPDisabled") then CommF:InvokeServer("EnablePvp") end
+        if Config.AutoPvP and CommF and Character:FindFirstChild("PvPDisabled") then
+            CommF:InvokeServer("EnablePvp")
         end
-        if Config.AutoHaki and CommF then
-            if not Character:FindFirstChild("HasBuso") then CommF:InvokeServer("Buso") end
+        if Config.AutoHaki and CommF and not Character:FindFirstChild("HasBuso") then
+            CommF:InvokeServer("Buso")
+        end
+        if Config.AutoObservation and not Character:FindFirstChild("VisionEffect") then
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+            task.wait(0.02)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+        end
+        if Config.AutoRaceSkill then
+            -- Trigger Race V3 (Key T) & Awakening V4 (Key Y)
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.T, false, game)
+            task.wait(0.02)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.T, false, game)
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
+            task.wait(0.02)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Y, false, game)
         end
     end)
 end
 
+-- [[ Target Selector ]] --
 local function AcquireBestTarget()
     local best, shortest = nil, math.huge
     local myLevel = GetPlayerLevel(LocalPlayer)
@@ -169,17 +190,25 @@ local function AcquireBestTarget()
             local hum = p.Character.Humanoid
             local hrp = p.Character.HumanoidRootPart
             local pLevel = GetPlayerLevel(p)
+            
             local isBlacklisted = false
             if BlacklistedTargets[p] then
-                if tick() < BlacklistedTargets[p] then isBlacklisted = true
-                else BlacklistedTargets[p] = nil end
+                if tick() < BlacklistedTargets[p] then
+                    isBlacklisted = true
+                else
+                    BlacklistedTargets[p] = nil
+                end
             end
+            
             if not isBlacklisted and hum.Health > 0 and IsPvPActive(p) and pLevel >= Config.MinBountyLevel then
                 local eligible = true
                 if myLevel > 100 and pLevel < (myLevel - 350) and pLevel < 2000 then eligible = false end
                 if eligible then
                     local dist = (RootPart.Position - hrp.Position).Magnitude
-                    if dist < shortest then shortest = dist; best = p end
+                    if dist < shortest then
+                        shortest = dist
+                        best = p
+                    end
                 end
             end
         end
@@ -187,31 +216,33 @@ local function AcquireBestTarget()
     return best
 end
 
-local function SwitchWeapon()
+-- [[ Weapon Switcher ]] --
+local function EquipWeapon(category)
     local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if not backpack or not Character or not Humanoid then return end
-    local category = Config.Weapons[CurrentWeaponIndex]
+    if not backpack or not Character or not Humanoid then return false end
     for _, tool in ipairs(backpack:GetChildren()) do
         if tool:IsA("Tool") then
             local tType = tool:GetAttribute("WeaponType") or tool.ToolTip
             if tType == category or tool.Name:lower():find(category:lower()) or (category == "Melee" and tool:FindFirstChild("CombatScript")) then
-                Humanoid:EquipTool(tool); break
+                Humanoid:EquipTool(tool)
+                return true
             end
         end
     end
-    CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
+    return false
 end
 
+-- [[ Fast Attack Engine ]] --
 local function ExecuteFastAttack(targetHRP)
     if not Config.FastAttack or not targetHRP then return end
     pcall(function()
-        if not ActiveController then SetupCombatHooks() end
+        if not ActiveController or not ActiveController.bladeHit then SetupCombatHooks() end
         if ActiveController then
             ActiveController.timeToNextAttack = 0
             ActiveController.attacking = false
             ActiveController.blocking = false
-            ActiveController.hitboxMagnitude = 100
-            ActiveController.increment = 3
+            ActiveController.hitboxMagnitude = Config.AttackRadius
+            ActiveController.increment = 4
             if ActiveController.attack then ActiveController:attack() end
             if ActiveController.bladeHit then ActiveController.bladeHit(targetHRP, {targetHRP}) end
         end
@@ -222,39 +253,105 @@ local function ExecuteFastAttack(targetHRP)
     end)
     local tool = Character:FindFirstChildOfClass("Tool")
     if tool then tool:Activate() end
-    VirtualUser:CaptureController()
-    VirtualUser:Button1Down(Vector2.new(0, 0))
-    VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
-local function CastSkills(targetHRP, targetHum)
-    if not Config.SkillSpam or not targetHRP or targetHum.Health <= 0 then return end
-    pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
-    for _, key in ipairs(Config.Skills) do
-        if not CurrentTarget or targetHum.Health <= 0 then break end
-        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
-        task.wait(0.02)
-        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-        task.wait(0.03)
+-- [[ Smart Combo Sequencer ]] --
+local function ExecuteComboChain(targetHRP, targetHum)
+    if not Config.ComboEnabled or IsExecutingCombo or not targetHRP or targetHum.Health <= 0 then return end
+    IsExecutingCombo = true
+    
+    task.spawn(function()
+        local currentStage = Config.ComboChain[CurrentComboIndex]
+        if currentStage then
+            EquipWeapon(currentStage.Category)
+            task.wait(0.06)
+            
+            for _, key in ipairs(currentStage.Skills) do
+                if not CurrentTarget or targetHum.Health <= 0 or not Config.Enabled then break end
+                
+                -- ล็อคมุมกล้องไปที่ตำแหน่งเป้าหมาย
+                pcall(function()
+                    Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
+                end)
+                
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+                task.wait(0.04)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+                task.wait(currentStage.Delay)
+            end
+        end
+        
+        CurrentComboIndex = (CurrentComboIndex % #Config.ComboChain) + 1
+        IsExecutingCombo = false
+    end)
+end
+
+-- [[ Dynamic Orbit & Flight Physics ]] --
+local function SetupFlight()
+    if not RootPart then return end
+    if not FlightBodyVelocity or FlightBodyVelocity.Parent ~= RootPart then
+        if FlightBodyVelocity then FlightBodyVelocity:Destroy() end
+        FlightBodyVelocity = Instance.new("BodyVelocity")
+        FlightBodyVelocity.MaxForce = Vector3.new(1e5, 1e5, 1e5)
+        FlightBodyVelocity.P = 2000
+        FlightBodyVelocity.Parent = RootPart
+    end
+    if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
+        if FlightBodyGyro then FlightBodyGyro:Destroy() end
+        FlightBodyGyro = Instance.new("BodyGyro")
+        FlightBodyGyro.MaxTorque = Vector3.new(1e5, 1e5, 1e5)
+        FlightBodyGyro.P = 3000
+        FlightBodyGyro.D = 100
+        FlightBodyGyro.Parent = RootPart
     end
 end
 
-local function GlideToTarget(targetHRP)
-    SetupFlightPhysics()
+local function ClearFlight()
+    if FlightBodyVelocity then FlightBodyVelocity:Destroy(); FlightBodyVelocity = nil end
+    if FlightBodyGyro then FlightBodyGyro:Destroy(); FlightBodyGyro = nil end
+    if Humanoid then Humanoid.PlatformStand = false end
+end
+
+local function FlightController(targetHRP)
+    SetupFlight()
     if not FlightBodyVelocity or not FlightBodyGyro then return end
-    local targetPos = targetHRP.Position + Vector3.new(0, Config.OverheadDistance, 0)
-    local curPos = RootPart.Position
-    local delta = targetPos - curPos
+    
+    -- เช็ค Emergency Escape ถ้าเลือดต่ำกว่าขีดอันตราย
+    local myHealthPercent = (Humanoid.Health / Humanoid.MaxHealth) * 100
+    if Config.AutoEscape and myHealthPercent <= Config.EscapeHealthPercent then
+        CombatTracker.IsEscaping = true
+        local escapePos = targetHRP.Position + Vector3.new(0, Config.EscapeHeight, 0)
+        local delta = escapePos - RootPart.Position
+        FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
+        FlightBodyGyro.CFrame = CFrame.new(RootPart.Position, escapePos)
+        return
+    else
+        CombatTracker.IsEscaping = false
+    end
+    
+    local desiredPos
+    if Config.OrbitEnabled then
+        OrbitAngle = (OrbitAngle + Config.OrbitSpeed * 0.04) % (2 * math.pi)
+        local offsetX = math.cos(OrbitAngle) * Config.OrbitDistance
+        local offsetZ = math.sin(OrbitAngle) * Config.OrbitDistance
+        desiredPos = targetHRP.Position + Vector3.new(offsetX, Config.OrbitHeight, offsetZ)
+    else
+        desiredPos = targetHRP.Position + Vector3.new(0, Config.OrbitHeight, 0)
+    end
+    
+    local delta = desiredPos - RootPart.Position
     local dist = delta.Magnitude
-    FlightBodyGyro.CFrame = CFrame.new(curPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
-    if dist > 10 then
+    
+    FlightBodyGyro.CFrame = CFrame.new(RootPart.Position, targetHRP.Position)
+    if dist > 8 then
         FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
     else
-        FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        RootPart.CFrame = CFrame.new(targetPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
+        FlightBodyVelocity.Velocity = Vector3.zero
+        RootPart.CFrame = CFrame.new(desiredPos, targetHRP.Position)
     end
 end
 
+-- [[ Target Acquisition Loop ]] --
 task.spawn(function()
     while true do
         task.wait(Config.HuntInterval)
@@ -276,24 +373,32 @@ task.spawn(function()
     end
 end)
 
+-- [[ Main Combat Execution Loop ]] --
 task.spawn(function()
     while true do
-        task.wait(0.015)
+        task.wait(Config.FastAttackDelay)
         if Config.Enabled then
-            EnsurePvPAndHaki()
+            EnsureCombatBuffs()
+            
             if Config.TargetMode == "Manual" and Config.SelectedPlayer then
                 local p = Config.SelectedPlayer
                 if p and p.Parent and p.Character and p.Character:FindFirstChild("HumanoidRootPart") and p.Character:FindFirstChild("Humanoid") and p.Character.Humanoid.Health > 0 then
                     CurrentTarget = p
-                else CurrentTarget = nil end
+                else
+                    CurrentTarget = nil
+                end
             end
+            
             if CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("HumanoidRootPart") then
                 local tHRP = CurrentTarget.Character.HumanoidRootPart
                 local tHum = CurrentTarget.Character.Humanoid
+                
                 if tHum.Health > 0 then
-                    GlideToTarget(tHRP)
+                    FlightController(tHRP)
                     local dist = (RootPart.Position - tHRP.Position).Magnitude
-                    if dist <= 25 then
+                    
+                    if not CombatTracker.IsEscaping and dist <= Config.AttackRadius then
+                        -- Combat Tracker & Damage Verification
                         if CombatTracker.Player ~= CurrentTarget or CombatTracker.EngagedTime == 0 then
                             CombatTracker.Player = CurrentTarget
                             CombatTracker.EngagedTime = tick()
@@ -306,41 +411,42 @@ task.spawn(function()
                                 CombatTracker.EngagedTime = tick()
                             elseif not CombatTracker.HasDealtDamage then
                                 if (tick() - CombatTracker.EngagedTime) >= Config.DamageTestTime then
+                                    -- ดาเมจไม่เข้า (ติด Safezone หรืออมตะ) ทำการ Blacklist
                                     BlacklistedTargets[CurrentTarget] = tick() + Config.BlacklistTime
                                     CurrentTarget = nil
                                     CombatTracker.EngagedTime = 0
                                 end
                             end
                         end
+                        
                         if CurrentTarget then
-                            if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
-                                SwitchWeapon(); LastWeaponSwitch = tick()
-                            end
                             ExecuteFastAttack(tHRP)
-                            CastSkills(tHRP, tHum)
+                            ExecuteComboChain(tHRP, tHum)
                         end
                     end
-                else CurrentTarget = nil end
+                else
+                    CurrentTarget = nil
+                end
             end
         else
-            ClearFlightPhysics()
+            ClearFlight()
             CurrentTarget = nil
         end
     end
 end)
 
--- [[ UI ]] --
+-- [[ UI Construction ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTKHub"
+    ScreenGui.Name = "NONTKHub_v82"
     ScreenGui.ResetOnSpawn = false
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
 
-    -- MiniBar (แสดงเสมอ)
+    -- MiniBar
     local MiniBar = Instance.new("Frame", ScreenGui)
-    MiniBar.Size = UDim2.new(0, 220, 0, 36)
-    MiniBar.Position = UDim2.new(0.5, -110, 0.0, 12)
+    MiniBar.Size = UDim2.new(0, 240, 0, 36)
+    MiniBar.Position = UDim2.new(0.5, -120, 0.0, 12)
     MiniBar.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
     MiniBar.BorderSizePixel = 0
     MiniBar.Active = true
@@ -358,7 +464,7 @@ local function BuildUI()
     Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
 
     local MiniLabel = Instance.new("TextLabel", MiniBar)
-    MiniLabel.Size = UDim2.new(1, -70, 1, 0)
+    MiniLabel.Size = UDim2.new(1, -75, 1, 0)
     MiniLabel.Position = UDim2.new(0, 26, 0, 0)
     MiniLabel.BackgroundTransparency = 1
     MiniLabel.TextColor3 = Color3.fromRGB(210, 210, 255)
@@ -379,7 +485,7 @@ local function BuildUI()
 
     -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, 360, 0, 520)
+    Main.Size = UDim2.new(0, 360, 0, 540)
     Main.Position = UDim2.new(0.5, -180, 0.08, 0)
     Main.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
     Main.BorderSizePixel = 0
@@ -405,7 +511,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = 13
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚔ NONTK BOUNTY HUNTER v81"
+    HeaderTitle.Text = "⚔ NONTK BOUNTY HUNTER v82"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 36, 0, 28)
@@ -425,8 +531,9 @@ local function BuildUI()
         CollapseBtn.Text = IsOpen and "▲ HUB" or "▼ HUB"
     end)
 
+    -- Toggle Hunt Button
     local Toggle = Instance.new("TextButton", Main)
-    Toggle.Size = UDim2.new(0.92, 0, 0, 40)
+    Toggle.Size = UDim2.new(0.92, 0, 0, 38)
     Toggle.Position = UDim2.new(0.04, 0, 0, 50)
     Toggle.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
     Toggle.TextColor3 = Color3.fromRGB(255, 255, 255)
@@ -435,9 +542,10 @@ local function BuildUI()
     Toggle.Text = "⏸ NONTK HUNT: OFF"
     Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 7)
 
+    -- Mode Button
     local ModeBtn = Instance.new("TextButton", Main)
-    ModeBtn.Size = UDim2.new(0.92, 0, 0, 30)
-    ModeBtn.Position = UDim2.new(0.04, 0, 0, 96)
+    ModeBtn.Size = UDim2.new(0.92, 0, 0, 28)
+    ModeBtn.Position = UDim2.new(0.04, 0, 0, 94)
     ModeBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 40)
     ModeBtn.TextColor3 = Color3.fromRGB(180, 200, 255)
     ModeBtn.Font = Enum.Font.GothamBold
@@ -445,17 +553,50 @@ local function BuildUI()
     ModeBtn.Text = "🎯 TARGET: AUTO (PROXIMITY FIRST)"
     Instance.new("UICorner", ModeBtn).CornerRadius = UDim.new(0, 6)
 
+    -- Orbit & Escape Toggle Row
+    local OrbitBtn = Instance.new("TextButton", Main)
+    OrbitBtn.Size = UDim2.new(0.44, 0, 0, 26)
+    OrbitBtn.Position = UDim2.new(0.04, 0, 0, 128)
+    OrbitBtn.BackgroundColor3 = Color3.fromRGB(35, 90, 55)
+    OrbitBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    OrbitBtn.Font = Enum.Font.GothamBold
+    OrbitBtn.TextSize = 10
+    OrbitBtn.Text = "🌀 ORBIT: ON"
+    Instance.new("UICorner", OrbitBtn).CornerRadius = UDim.new(0, 5)
+
+    local EscapeBtn = Instance.new("TextButton", Main)
+    EscapeBtn.Size = UDim2.new(0.44, 0, 0, 26)
+    EscapeBtn.Position = UDim2.new(0.52, 0, 0, 128)
+    EscapeBtn.BackgroundColor3 = Color3.fromRGB(35, 90, 55)
+    EscapeBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    EscapeBtn.Font = Enum.Font.GothamBold
+    EscapeBtn.TextSize = 10
+    EscapeBtn.Text = "🛡 AUTO ESCAPE: ON"
+    Instance.new("UICorner", EscapeBtn).CornerRadius = UDim.new(0, 5)
+
+    OrbitBtn.MouseButton1Click:Connect(function()
+        Config.OrbitEnabled = not Config.OrbitEnabled
+        OrbitBtn.BackgroundColor3 = Config.OrbitEnabled and Color3.fromRGB(35, 90, 55) or Color3.fromRGB(45, 45, 55)
+        OrbitBtn.Text = Config.OrbitEnabled and "🌀 ORBIT: ON" or "🌀 ORBIT: OFF"
+    end)
+
+    EscapeBtn.MouseButton1Click:Connect(function()
+        Config.AutoEscape = not Config.AutoEscape
+        EscapeBtn.BackgroundColor3 = Config.AutoEscape and Color3.fromRGB(35, 90, 55) or Color3.fromRGB(45, 45, 55)
+        EscapeBtn.Text = Config.AutoEscape and "🛡 AUTO ESCAPE: ON" or "🛡 AUTO ESCAPE: OFF"
+    end)
+
     -- Speed Slider Section
     local SpeedSection = Instance.new("Frame", Main)
-    SpeedSection.Size = UDim2.new(0.92, 0, 0, 56)
-    SpeedSection.Position = UDim2.new(0.04, 0, 0, 132)
+    SpeedSection.Size = UDim2.new(0.92, 0, 0, 54)
+    SpeedSection.Position = UDim2.new(0.04, 0, 0, 160)
     SpeedSection.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
     SpeedSection.BorderSizePixel = 0
     Instance.new("UICorner", SpeedSection).CornerRadius = UDim.new(0, 6)
 
     local SpeedLabel = Instance.new("TextLabel", SpeedSection)
-    SpeedLabel.Size = UDim2.new(0.75, 0, 0, 20)
-    SpeedLabel.Position = UDim2.new(0, 10, 0, 4)
+    SpeedLabel.Size = UDim2.new(0.75, 0, 0, 18)
+    SpeedLabel.Position = UDim2.new(0, 10, 0, 3)
     SpeedLabel.BackgroundTransparency = 1
     SpeedLabel.TextColor3 = Color3.fromRGB(200, 220, 255)
     SpeedLabel.Font = Enum.Font.GothamBold
@@ -463,19 +604,9 @@ local function BuildUI()
     SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
     SpeedLabel.Text = "✈ FLY SPEED: 160 studs/s"
 
-    local SpeedNote = Instance.new("TextLabel", SpeedSection)
-    SpeedNote.Size = UDim2.new(1, -10, 0, 13)
-    SpeedNote.Position = UDim2.new(0, 10, 0, 23)
-    SpeedNote.BackgroundTransparency = 1
-    SpeedNote.TextColor3 = Color3.fromRGB(110, 120, 150)
-    SpeedNote.Font = Enum.Font.Gotham
-    SpeedNote.TextSize = 9
-    SpeedNote.TextXAlignment = Enum.TextXAlignment.Left
-    SpeedNote.Text = "Safe: 90–175 studs/s | เกิน 175 = อาจโดน rollback"
-
     local SliderTrack = Instance.new("Frame", SpeedSection)
     SliderTrack.Size = UDim2.new(0.78, 0, 0, 8)
-    SliderTrack.Position = UDim2.new(0.1, 0, 0, 42)
+    SliderTrack.Position = UDim2.new(0.1, 0, 0, 38)
     SliderTrack.BackgroundColor3 = Color3.fromRGB(35, 35, 55)
     SliderTrack.BorderSizePixel = 0
     Instance.new("UICorner", SliderTrack).CornerRadius = UDim.new(1, 0)
@@ -483,7 +614,7 @@ local function BuildUI()
     local SliderFill = Instance.new("Frame", SliderTrack)
     SliderFill.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
     SliderFill.BorderSizePixel = 0
-    SliderFill.Size = UDim2.new(0.733, 0, 1, 0) -- (160-50)/(200-50) = 0.733
+    SliderFill.Size = UDim2.new(0.733, 0, 1, 0)
     Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(1, 0)
 
     local SliderKnob = Instance.new("TextButton", SliderTrack)
@@ -505,7 +636,7 @@ local function BuildUI()
     end
 
     SliderKnob.MouseButton1Down:Connect(function() isDragging = true end)
-    game:GetService("UserInputService").InputEnded:Connect(function(i)
+    UserInputService.InputEnded:Connect(function(i)
         if i.UserInputType == Enum.UserInputType.MouseButton1 then isDragging = false end
     end)
     RunService.RenderStepped:Connect(function()
@@ -519,7 +650,7 @@ local function BuildUI()
 
     local BtnMinus = Instance.new("TextButton", SpeedSection)
     BtnMinus.Size = UDim2.new(0, 24, 0, 22)
-    BtnMinus.Position = UDim2.new(0, 4, 0, 30)
+    BtnMinus.Position = UDim2.new(0, 4, 0, 28)
     BtnMinus.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
     BtnMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
     BtnMinus.Font = Enum.Font.GothamBold
@@ -532,7 +663,7 @@ local function BuildUI()
 
     local BtnPlus = Instance.new("TextButton", SpeedSection)
     BtnPlus.Size = UDim2.new(0, 24, 0, 22)
-    BtnPlus.Position = UDim2.new(1, -28, 0, 30)
+    BtnPlus.Position = UDim2.new(1, -28, 0, 28)
     BtnPlus.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
     BtnPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
     BtnPlus.Font = Enum.Font.GothamBold
@@ -543,10 +674,10 @@ local function BuildUI()
         Config.FlySpeed = math.min(SpeedMax, Config.FlySpeed + 10); UpdateSlider()
     end)
 
-    -- Nearest Radar
+    -- Radar Frame
     local NearestRadar = Instance.new("TextLabel", Main)
-    NearestRadar.Size = UDim2.new(0.92, 0, 0, 40)
-    NearestRadar.Position = UDim2.new(0.04, 0, 0, 196)
+    NearestRadar.Size = UDim2.new(0.92, 0, 0, 36)
+    NearestRadar.Position = UDim2.new(0.04, 0, 0, 220)
     NearestRadar.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
     NearestRadar.TextColor3 = Color3.fromRGB(120, 235, 160)
     NearestRadar.Font = Enum.Font.GothamBold
@@ -555,10 +686,10 @@ local function BuildUI()
     NearestRadar.Text = "🎯 Radar: Scanning..."
     Instance.new("UICorner", NearestRadar).CornerRadius = UDim.new(0, 6)
 
-    -- Player List
+    -- Player List Frame
     local PlayerListFrame = Instance.new("ScrollingFrame", Main)
-    PlayerListFrame.Size = UDim2.new(0.92, 0, 0, 130)
-    PlayerListFrame.Position = UDim2.new(0.04, 0, 0, 242)
+    PlayerListFrame.Size = UDim2.new(0.92, 0, 0, 120)
+    PlayerListFrame.Position = UDim2.new(0.04, 0, 0, 262)
     PlayerListFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
     PlayerListFrame.BorderSizePixel = 0
     PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
@@ -570,8 +701,8 @@ local function BuildUI()
 
     -- Status Box
     local Status = Instance.new("TextLabel", Main)
-    Status.Size = UDim2.new(0.92, 0, 0, 80)
-    Status.Position = UDim2.new(0.04, 0, 0, 380)
+    Status.Size = UDim2.new(0.92, 0, 0, 84)
+    Status.Position = UDim2.new(0.04, 0, 0, 388)
     Status.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
     Status.TextColor3 = Color3.fromRGB(200, 220, 255)
     Status.Font = Enum.Font.Gotham
@@ -583,12 +714,12 @@ local function BuildUI()
     -- Refresh Button
     local RefreshBtn = Instance.new("TextButton", Main)
     RefreshBtn.Size = UDim2.new(0.92, 0, 0, 26)
-    RefreshBtn.Position = UDim2.new(0.04, 0, 0, 468)
+    RefreshBtn.Position = UDim2.new(0.04, 0, 0, 478)
     RefreshBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 42)
     RefreshBtn.TextColor3 = Color3.fromRGB(160, 190, 255)
     RefreshBtn.Font = Enum.Font.GothamBold
     RefreshBtn.TextSize = 11
-    RefreshBtn.Text = "🔄 REFRESH PLAYER LIST"
+    RefreshBtn.Text = "🔄 REFRESH TARGET LIST"
     Instance.new("UICorner", RefreshBtn).CornerRadius = UDim.new(0, 6)
 
     local PlayerButtons = {}
@@ -608,13 +739,13 @@ local function BuildUI()
                 local pvp = IsPvPActive(p) and "✅" or "❌"
 
                 local pBtn = Instance.new("TextButton", PlayerListFrame)
-                pBtn.Size = UDim2.new(0.96, 0, 0, 30)
+                pBtn.Size = UDim2.new(0.96, 0, 0, 28)
                 pBtn.BackgroundColor3 = (Config.SelectedPlayer == p) and Color3.fromRGB(40, 120, 70) or Color3.fromRGB(22, 22, 32)
                 pBtn.TextColor3 = Color3.fromRGB(230, 230, 255)
                 pBtn.Font = Enum.Font.Gotham
                 pBtn.TextSize = 10
                 pBtn.TextXAlignment = Enum.TextXAlignment.Left
-                pBtn.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
+                pBtn.Text = string.format(" PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
                 Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
                 PlayerButtons[p] = pBtn
 
@@ -629,7 +760,7 @@ local function BuildUI()
                 end)
             end
         end
-        PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, count * 34)
+        PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, count * 32)
     end
 
     PopulatePlayerList()
@@ -641,7 +772,7 @@ local function BuildUI()
         Config.Enabled = not Config.Enabled
         Toggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(40, 155, 85) or Color3.fromRGB(35, 35, 48)
         Toggle.Text = Config.Enabled and "▶ NONTK HUNT: ACTIVE" or "⏸ NONTK HUNT: OFF"
-        if not Config.Enabled then ClearFlightPhysics(); CurrentTarget = nil end
+        if not Config.Enabled then ClearFlight(); CurrentTarget = nil end
     end)
 
     ModeBtn.MouseButton1Click:Connect(function()
@@ -658,43 +789,48 @@ local function BuildUI()
         end
     end)
 
-    -- Real-time Refresh Loop
+    -- Real-time UI Refresh Loop
     task.spawn(function()
         while ScreenGui.Parent do
             task.wait(0.25)
 
-            -- Status Dot Color
             if Config.Enabled and CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
-                StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 50)
+                if CombatTracker.IsEscaping then
+                    StatusDot.BackgroundColor3 = Color3.fromRGB(255, 120, 0)
+                else
+                    StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 50)
+                end
             elseif Config.Enabled then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
             end
 
-            -- MiniBar Label
+            -- MiniBar Text
             if not Config.Enabled then
                 MiniLabel.Text = "NONTK | IDLE"
+            elseif CombatTracker.IsEscaping then
+                MiniLabel.Text = "🛡 RETREATING (LOW HP)"
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local hp, maxHp = GetPlayerHealth(CurrentTarget)
-                MiniLabel.Text = string.format("⚔ NONTK | %s | %d/%d", CurrentTarget.Name, hp, maxHp)
+                MiniLabel.Text = string.format("⚔ %s | %d/%d", CurrentTarget.Name, hp, maxHp)
             else
-                MiniLabel.Text = "🔍 NONTK Hunting... | " .. Config.FlySpeed .. " s/s"
+                MiniLabel.Text = "🔍 Searching Targets..."
             end
 
-            -- Player Buttons
+            -- Player List Text Updates
             for p, btn in pairs(PlayerButtons) do
                 if p and p.Parent then
                     local lvl = GetPlayerLevel(p)
                     local hp, maxHp = GetPlayerHealth(p)
                     local dist = GetDistanceToPlayer(p)
                     local pvp = IsPvPActive(p) and "✅" or "❌"
-                    btn.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
+                    btn.Text = string.format(" PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
                     btn.BackgroundColor3 = (Config.SelectedPlayer == p) and Color3.fromRGB(40, 120, 70) or Color3.fromRGB(22, 22, 32)
                 end
             end
 
-            -- Nearest Radar
+            -- Nearest Target Radar
             local nearestP, minD = nil, math.huge
             if RootPart then
                 for _, p in ipairs(Players:GetPlayers()) do
@@ -710,23 +846,27 @@ local function BuildUI()
             if nearestP and nearestP.Character and nearestP.Character:FindFirstChild("Humanoid") then
                 local lvl = GetPlayerLevel(nearestP)
                 local hp, maxHp = GetPlayerHealth(nearestP)
-                NearestRadar.Text = string.format("🎯 Nearest PvP✅: %s (Lv.%d) | HP:%d/%d | %dstuds", nearestP.Name, lvl, hp, maxHp, math.floor(minD))
+                NearestRadar.Text = string.format("🎯 Nearest: %s (Lv.%d) | HP:%d/%d | %dstuds", nearestP.Name, lvl, hp, maxHp, math.floor(minD))
             else
-                NearestRadar.Text = "🎯 Nearest: No PvP-enabled players found"
+                NearestRadar.Text = "🎯 Nearest: No PvP-active players in range"
             end
 
-            -- Status Box
+            -- Main Status Box
             if not Config.Enabled then
-                Status.Text = string.format("⏸ NONTK IDLE\nSpeed: %d studs/s | Mode: %s\nBuso & PvP: Auto | Hunt: %s", Config.FlySpeed, Config.TargetMode, Config.AutoHunt and "ON" or "OFF")
+                Status.Text = string.format("⏸ NONTK IDLE\nSpeed: %d studs/s | Mode: %s\nOrbit: %s | Auto Escape: %s", 
+                    Config.FlySpeed, Config.TargetMode, Config.OrbitEnabled and "ON" or "OFF", Config.AutoEscape and "ON" or "OFF")
+            elseif CombatTracker.IsEscaping then
+                Status.Text = string.format("🛡 EMERGENCY RETREAT ACTIVE!\nHealth: %d%% (Low)\nAscending to safe altitude: %d studs", 
+                    math.floor((Humanoid.Health / Humanoid.MaxHealth) * 100), Config.EscapeHeight)
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local lvl = GetPlayerLevel(CurrentTarget)
                 local hp, maxHp = GetPlayerHealth(CurrentTarget)
                 local dist = GetDistanceToPlayer(CurrentTarget)
-                local state = CombatTracker.HasDealtDamage and "🔴 EXECUTION MODE" or "🟡 APPROACHING"
-                Status.Text = string.format("⚔ LOCKED: %s (Lv.%d)\n%s | HP:%d/%d | Dist:%dstuds\nWeapon:%s | Mode:%s",
-                    CurrentTarget.Name, lvl, state, hp, maxHp, dist, Config.Weapons[CurrentWeaponIndex] or "?", Config.TargetMode)
+                local stageName = Config.ComboChain[CurrentComboIndex] and Config.ComboChain[CurrentComboIndex].Category or "Burst"
+                Status.Text = string.format("⚔ LOCKED: %s (Lv.%d)\nHP: %d/%d | Dist: %d studs\nCombo: %s | Orbit: %s", 
+                    CurrentTarget.Name, lvl, hp, maxHp, dist, stageName, Config.OrbitEnabled and "ACTIVE" or "OFF")
             else
-                Status.Text = string.format("🔵 NONTK HUNTING...\nSearching PvP✅ targets (Lv.%d+)\nSpeed: %d studs/s | Blacklist: Active", Config.MinBountyLevel, Config.FlySpeed)
+                Status.Text = string.format("🔵 HUNTING TARGETS (Lv.%d+)\nSpeed: %d studs/s | Blacklist: Active\nWaiting for target...", Config.MinBountyLevel, Config.FlySpeed)
             end
         end
     end)
