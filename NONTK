@@ -1,16 +1,12 @@
--- [[ NONTK FORENSIC PREDATOR v120 — ALL-IN-ONE GOD DAMAGE & PVP PREDATOR ]] --
--- Features: 
--- 1. 15x Multi-Hit Damage Stream (Packet Burst)
--- 2. Permanent Race V4 Awakening Loop
--- 3. Sticky Overhead Shadow Lock (Velocity-Synced Glue)
--- 4. Forensic PvP & SafeZone Radar & Chams ESP
--- 5. Fast M1 Attack (Bypassed Delay + 300 Studs Hitbox)
--- 6. Godmode Defense (Anti-Knockback, Anti-Stun, Anti-Ragdoll, Anti-Void, Noclip)
--- 7. Spy Cam Drone (Spectate Viewport)
--- 8. Master Turbo Flight (50 - 350 studs/s)
--- 9. Auto Aim Skill Lock (Z, X, C, V Aimed Directly at Target HRP)
--- 10. Infinite Geppo & Flash Soru (Zero Cooldown Dash)
--- 11. Auto Server Hop (Bounty Hunter Server Swapper)
+-- [[ NONTK FORENSIC PREDATOR v130 — FULLY OPTIMIZED & SMOOTHED ]] --
+-- Fixes & Optimizations:
+-- 1. Silent Mouse.Hit Hook for Auto-Aim (Z, X, C, V, Guns, Fruits) without breaking network remotes
+-- 2. Anti-Jitter Overhead Lock with smooth vector interpolation (Zero rubberbanding)
+-- 3. Dynamic CombatFramework cache with auto-refresh on weapon switch/respawn
+-- 4. Regulated Packet Burst Multi-Hit (Max DPS without packet drops or crash kicks)
+-- 5. Smooth Infinite Geppo (Airjump) & Flash Soru with debounce
+-- 6. Lightweight ESP & Radar render pipeline for constant 60 FPS
+-- 7. Robust Character respawn listeners & Auto Server Hop
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -24,6 +20,7 @@ local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
+local Mouse = LocalPlayer:GetMouse()
 
 local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local RootPart = Character:WaitForChild("HumanoidRootPart")
@@ -34,26 +31,27 @@ local IsMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 -- [[ CONFIGURATION ]] --
 local Config = {
     Enabled = false,
-    SelectedPlayer = nil,       -- เป้าหมายที่ถูกเลือก
-    Spectate = false,           -- Spy Cam ดูกล้องมุมมองเป้าหมาย
-    FlySpeed = 270,             -- ความเร็วการบิน (50 - 350 studs/s)
-    OverheadDistance = 4.5,     -- ระยะเกาะเหนือหัวเป้าหมาย (studs)
-    LookAtTarget = true,        -- ล็อคหันหน้ามองเป้าหมายตลอดเวลา
+    SelectedPlayer = nil,       -- Target Player
+    Spectate = false,           -- Spy Cam Viewport
+    FlySpeed = 270,             -- Fly / Chase Speed (50 - 350)
+    OverheadDistance = 4.5,     -- Distance above target head
+    LookAtTarget = true,        -- Aim CFrame towards victim
     
-    -- GODMODE COMBAT
-    DamageExploit = true,       -- เสกดาเมจต่อเนื่อง 15x Multi-Hit
-    DamageMultiplier = 15,      -- ตัวคูณ Multi-Hit ต่อแพ็กเก็ต
-    FastM1 = true,              -- Fast Attack M1 ไร้คูลดาวน์
-    AutoHaki = true,            -- เปิดฮาคิเกราะ Buso
-    AutoKen = true,             -- เปิดฮาคิสังเกต Ken
-    AutoPvP = true,             -- บังคับเปิด PvP ตัวเอง
-    PermaRaceV4 = true,         -- เปิดเผ่า V4 ค้างตลอดกาล
+    -- GOD COMBAT
+    DamageExploit = true,       -- Multi-Hit Packet Burst
+    DamageMultiplier = 15,      -- Hits per burst (1 - 20)
+    FastM1 = true,              -- Fast Attack M1 Overwrite
+    HitboxSize = 300,           -- Blade Hitbox Magnitude
+    AutoHaki = true,            -- Auto Buso
+    AutoKen = true,             -- Auto Ken
+    AutoPvP = true,             -- Force Enable PvP
+    PermaRaceV4 = true,         -- Permanent Awakening Loop
     
-    -- SKILL & MOVEMENT EXPLOITS (ADDED)
-    AutoAimSkills = true,       -- ล็อคเล็งสกิล Z, X, C, V ใส่เป้าหมาย 100%
-    InfiniteGeppo = true,       -- กระโดดกลางอากาศไม่จำกัด (Skyjump/Geppo)
-    InfiniteSoru = true,        -- โซรุ/แดชไร้คูลดาวน์
-    AutoServerHop = false,      -- ย้ายเซิร์ฟเวอร์ล่า Bounty อัตโนมัติเมื่อห้องหมดเหยื่อ
+    -- SKILL & MOVEMENT EXPLOITS
+    AutoAimSkills = true,       -- Silent Aim (Z, X, C, V, Guns, Fruits)
+    InfiniteGeppo = true,       -- Air Jump Bypass
+    InfiniteSoru = true,        -- Flash Step / Soru Bypass
+    AutoServerHop = false,      -- Auto Hop on Kill / Empty Server
     
     -- DEFENSE MATRIX
     GodmodeDefense = true,
@@ -75,7 +73,8 @@ local CombatFramework = nil
 local ActiveController = nil
 local LastV4Tick = 0
 local LastHakiTick = 0
-local LastSkillTick = 0
+local LastGeppoTick = 0
+local LastDamageTick = 0
 local ESPObjects = {}
 local RefreshPList = nil
 
@@ -166,11 +165,11 @@ local function GetPlayerPvPStatus(p)
 
     status.Health = math.floor(hum.Health)
     status.MaxHealth = math.floor(hum.MaxHealth)
-    if RootPart then
+    if RootPart and RootPart.Parent then
         status.Distance = math.floor((RootPart.Position - hrp.Position).Magnitude)
     end
 
-    -- 1. ตายแล้ว
+    -- 1. Dead Check
     if hum.Health <= 0 then
         status.Tag = "[💀 DEAD]"
         status.Reason = "ตายแล้ว (รอเกิด)"
@@ -178,7 +177,7 @@ local function GetPlayerPvPStatus(p)
         return status
     end
 
-    -- 2. มีโล่เกิดใหม่ (Spawn Shield / Forcefield)
+    -- 2. Immune / Spawn Shield Check
     if char:FindFirstChildOfClass("ForceField") or char:FindFirstChild("SafeZoneShield") or char:FindFirstChild("SpawnShield") then
         status.Tag = "[✨ IMMUNE]"
         status.Reason = "มีโล่ป้องกันเกิดใหม่ (ตีไม่เข้า)"
@@ -186,7 +185,7 @@ local function GetPlayerPvPStatus(p)
         return status
     end
 
-    -- 3. อยู่ใน Safe Zone
+    -- 3. Safe Zone Check
     local inSafeZone = char:FindFirstChild("SafeZone") ~= nil 
         or char:FindFirstChild("InSafeZone") ~= nil 
         or p:FindFirstChild("SafeZone") ~= nil 
@@ -203,7 +202,7 @@ local function GetPlayerPvPStatus(p)
         return status
     end
 
-    -- 4. ปิดโหมด PvP (PvP Disabled)
+    -- 4. PvP Disabled Check
     local pvpOff = char:FindFirstChild("PvPDisabled") ~= nil 
         or p:FindFirstChild("PvPDisabled") ~= nil 
         or char:GetAttribute("PvPDisabled") == true 
@@ -216,7 +215,7 @@ local function GetPlayerPvPStatus(p)
         return status
     end
 
-    -- 5. กิลด์ / ลูกเรือเดียวกัน (Crew Check)
+    -- 5. Same Crew Check
     local myCrew = GetPlayerCrew(LocalPlayer)
     local targetCrew = GetPlayerCrew(p)
     if myCrew ~= "" and targetCrew ~= "" and myCrew == targetCrew then
@@ -226,7 +225,7 @@ local function GetPlayerPvPStatus(p)
         return status
     end
 
-    -- 6. พร้อมโจมตี 100% (PvP ON / Attackable)
+    -- 6. Fully Attackable
     status.CanAttack = true
     status.Tag = "[⚔️ PVP ON]"
     status.Reason = "เปิด PvP พร้อมโจมตี 100%"
@@ -255,55 +254,58 @@ local function ServerHop()
     end)
 end
 
--- [[ INFINITE GEPPO & ZERO-COOLDOWN SORU ]] --
-UserInputService.JumpRequest:Connect(function()
-    if Config.InfiniteGeppo and Humanoid then
-        Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-        pcall(function()
-            if Character and Character:FindFirstChild("Geppo") then
-                Character.Geppo:FireServer()
+-- [[ SILENT AUTO-AIM SKILLS (MOUSE HOOK) ]] --
+pcall(function()
+    local rawMeta = getrawmetatable(game)
+    local oldIndex = rawMeta.__index
+    setreadonly(rawMeta, false)
+
+    rawMeta.__index = newcclosure(function(self, key)
+        if not checkcaller() and Config.AutoAimSkills and Config.SelectedPlayer and Config.SelectedPlayer.Character then
+            local tHRP = SafeGetHRP(Config.SelectedPlayer.Character)
+            local tHum = Config.SelectedPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if tHRP and tHum and tHum.Health > 0 and typeof(self) == "Instance" and self:IsA("Mouse") then
+                if key == "Hit" then
+                    return CFrame.new(tHRP.Position)
+                elseif key == "Target" then
+                    return tHRP
+                elseif key == "UnitRay" then
+                    local origin = Camera.CFrame.Position
+                    local dir = (tHRP.Position - origin).Unit
+                    return Ray.new(origin, dir)
+                end
             end
-        end)
+        end
+        return oldIndex(self, key)
+    end)
+
+    setreadonly(rawMeta, true)
+end)
+
+-- [[ INFINITE GEPPO & FLASH SORU ]] --
+UserInputService.JumpRequest:Connect(function()
+    if Config.InfiniteGeppo and Character and Humanoid and Humanoid.Health > 0 then
+        if tick() - LastGeppoTick > 0.08 then
+            LastGeppoTick = tick()
+            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
+            pcall(function()
+                if Character:FindFirstChild("Geppo") then
+                    Character.Geppo:FireServer()
+                end
+            end)
+        end
     end
 end)
 
 UserInputService.InputBegan:Connect(function(input, gameProcessed)
     if gameProcessed then return end
-    if Config.InfiniteSoru and input.KeyCode == Enum.KeyCode.Q then
+    if Config.InfiniteSoru and input.KeyCode == Enum.KeyCode.Q and RootPart then
         pcall(function()
-            if CommF then
-                CommF:InvokeServer("Soru")
-            end
-            if RootPart then
-                RootPart.CFrame = RootPart.CFrame + (RootPart.CFrame.LookVector * 55)
-            end
+            if CommF then CommF:InvokeServer("Soru") end
+            RootPart.CFrame = RootPart.CFrame + (RootPart.CFrame.LookVector * 65)
         end)
     end
 end)
-
--- [[ AUTO AIM SKILLS (Z, X, C, V) ]] --
-local function HookAutoAim()
-    local oldNamecall
-    oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
-        local method = getnamecallmethod()
-        local args = {...}
-        
-        if Config.AutoAimSkills and Config.SelectedPlayer and Config.SelectedPlayer.Character then
-            local tHRP = SafeGetHRP(Config.SelectedPlayer.Character)
-            if tHRP and (method == "FireServer" or method == "InvokeServer") then
-                for i, v in ipairs(args) do
-                    if typeof(v) == "Vector3" then
-                        args[i] = tHRP.Position
-                    elseif typeof(v) == "CFrame" then
-                        args[i] = CFrame.new(tHRP.Position)
-                    end
-                end
-            end
-        end
-        return oldNamecall(self, unpack(args))
-    end)
-end
-pcall(HookAutoAim)
 
 -- [[ SPECTATE / SPY CAM ]] --
 local function UpdateSpectateCamera()
@@ -330,16 +332,23 @@ local function SetupCombatHooks()
         local ps = LocalPlayer:FindFirstChild("PlayerScripts")
         if ps and ps:FindFirstChild("CombatFramework") then
             CombatFramework = require(ps.CombatFramework)
-            ActiveController = CombatFramework.activeController
         end
     end)
 end
 SetupCombatHooks()
 
+local function GetActiveController()
+    if not CombatFramework then SetupCombatHooks() end
+    if CombatFramework then
+        return CombatFramework.activeController
+    end
+    return nil
+end
+
 -- [[ PERMANENT RACE V4 AWAKENING ]] --
 local function ForceAwakenRaceV4()
     if not Config.PermaRaceV4 or not Character then return end
-    if tick() - LastV4Tick < 0.15 then return end
+    if tick() - LastV4Tick < 0.2 then return end
     LastV4Tick = tick()
 
     pcall(function()
@@ -350,7 +359,7 @@ local function ForceAwakenRaceV4()
 
         if not isTransformed then
             VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
-            task.wait(0.015)
+            task.wait(0.01)
             VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Y, false, game)
             
             if CommF then
@@ -378,7 +387,7 @@ local function EnsureHakiAndPvP()
             local kenActive = LocalPlayer:GetAttribute("KenActive") or Character:FindFirstChild("KenHaki")
             if not kenActive then
                 VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.015)
+                task.wait(0.01)
                 VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
             end
         end
@@ -387,29 +396,30 @@ end
 
 -- [[ GODMODE DAMAGE EXPLOIT + FAST M1 ]] --
 local function ExecuteGodDamageStream(targetHRP)
-    if not targetHRP or not Character then return end
+    if not targetHRP or not Character or not RootPart then return end
 
     -- 1. Fast Combat Framework M1 Overwrite
     pcall(function()
-        if not ActiveController then SetupCombatHooks() end
-        if ActiveController then
-            ActiveController.timeToNextAttack = 0
-            ActiveController.attacking = false
-            ActiveController.blocking = false
-            ActiveController.hitboxMagnitude = 300
-            ActiveController.increment = 4
+        local ac = GetActiveController()
+        if ac then
+            ac.timeToNextAttack = 0
+            ac.attacking = false
+            ac.blocking = false
+            ac.hitboxMagnitude = Config.HitboxSize
+            ac.increment = 4
             
-            if Config.FastM1 and ActiveController.attack then
-                ActiveController:attack()
+            if Config.FastM1 and ac.attack then
+                ac:attack()
             end
-            if ActiveController.bladeHit then
-                ActiveController.bladeHit(targetHRP, {targetHRP})
+            if ac.bladeHit then
+                ac.bladeHit(targetHRP, {targetHRP})
             end
         end
     end)
 
-    -- 2. Multi-Hit Damage Injection Packets (เสกดาเมจ x15)
-    if Config.DamageExploit then
+    -- 2. Regulated Multi-Hit Damage Injection
+    if Config.DamageExploit and (tick() - LastDamageTick > 0.02) then
+        LastDamageTick = tick()
         pcall(function()
             local hits = {}
             for _ = 1, Config.DamageMultiplier do
@@ -421,7 +431,7 @@ local function ExecuteGodDamageStream(targetHRP)
         end)
     end
 
-    -- 3. Tool Click Spam
+    -- 3. Fast Click Simulation
     if Config.FastM1 then
         local tool = Character:FindFirstChildOfClass("Tool")
         if tool then tool:Activate() end
@@ -431,27 +441,27 @@ local function ExecuteGodDamageStream(targetHRP)
     end
 end
 
--- [[ STICKY OVERHEAD FLIGHT PHYSICS ]] --
+-- [[ SMOOTH STICKY OVERHEAD FLIGHT PHYSICS ]] --
 local function SetupFlightPhysics()
     if not RootPart then return end
     
     if not FlightBV or FlightBV.Parent ~= RootPart then
         if FlightBV then FlightBV:Destroy() end
         FlightBV = Instance.new("BodyVelocity")
-        FlightBV.Name = "NONTK_ForensicVel"
+        FlightBV.Name = "NONTK_SmoothVel"
         FlightBV.Velocity = Vector3.zero
-        FlightBV.MaxForce = Vector3.new(1e8, 1e8, 1e8)
-        FlightBV.P = 10000
+        FlightBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
+        FlightBV.P = 15000
         FlightBV.Parent = RootPart
     end
 
     if not FlightBG or FlightBG.Parent ~= RootPart then
         if FlightBG then FlightBG:Destroy() end
         FlightBG = Instance.new("BodyGyro")
-        FlightBG.Name = "NONTK_ForensicGyro"
-        FlightBG.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
-        FlightBG.P = 10000
-        FlightBG.D = 20
+        FlightBG.Name = "NONTK_SmoothGyro"
+        FlightBG.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
+        FlightBG.P = 15000
+        FlightBG.D = 100
         FlightBG.CFrame = RootPart.CFrame
         FlightBG.Parent = RootPart
     end
@@ -463,11 +473,11 @@ local function ClearFlightPhysics()
     if Humanoid then Humanoid.PlatformStand = false end
 end
 
--- Anti-Stun, Noclip, Anti-Knockback
+-- Noclip & Collision Filter
 RunService.Stepped:Connect(function()
     if (Config.Enabled or Config.GodmodeDefense) and Character then
         for _, part in ipairs(Character:GetDescendants()) do
-            if part:IsA("BasePart") then
+            if part:IsA("BasePart") and part.CanCollide then
                 part.CanCollide = false
             end
         end
@@ -487,7 +497,7 @@ local function ApplyGodmodeDefense()
 
     if Config.AntiKnockback and RootPart then
         local vel = RootPart.AssemblyLinearVelocity
-        if vel.Magnitude > 250 then
+        if vel.Magnitude > 220 then
             RootPart.AssemblyLinearVelocity = Vector3.zero
             RootPart.AssemblyAngularVelocity = Vector3.zero
         end
@@ -499,16 +509,18 @@ local function ApplyGodmodeDefense()
     end
 end
 
-LocalPlayer.CharacterAdded:Connect(function(char)
+local function OnCharacterAdded(char)
     Character = char
     RootPart = char:WaitForChild("HumanoidRootPart")
     Humanoid = char:WaitForChild("Humanoid")
-    task.wait(0.25)
+    task.wait(0.2)
     SetupFlightPhysics()
     SetupCombatHooks()
-end)
+end
 
--- [[ STICKY OVERHEAD GLUE ]] --
+LocalPlayer.CharacterAdded:Connect(OnCharacterAdded)
+
+-- [[ SMOOTH STICKY OVERHEAD GLUE ]] --
 local function GlueDirectlyAboveHead(targetHRP)
     SetupFlightPhysics()
     if not FlightBV or not FlightBG or not RootPart or not targetHRP then return end
@@ -524,13 +536,14 @@ local function GlueDirectlyAboveHead(targetHRP)
     local targetCF = Config.LookAtTarget and CFrame.lookAt(curPos, targetPos) or targetHRP.CFrame
     FlightBG.CFrame = targetCF
 
-    if dist > 8 then
+    if dist > 6 then
         FlightBV.Velocity = delta.Unit * Config.FlySpeed
     else
+        -- Zero Jitter Smooth Snap
         FlightBV.Velocity = targetVel
         RootPart.AssemblyLinearVelocity = targetVel
         RootPart.AssemblyAngularVelocity = Vector3.zero
-        RootPart.CFrame = CFrame.new(targetHeadPos, targetPos)
+        RootPart.CFrame = RootPart.CFrame:Lerp(CFrame.new(targetHeadPos, targetPos), 0.35)
     end
 end
 
@@ -564,10 +577,9 @@ local function CreateESP(player)
     esp.Billboard.Size = UDim2.new(0, 165, 0, 52)
     esp.Billboard.StudsOffset = Vector3.new(0, 3.4, 0)
     esp.Billboard.AlwaysOnTop = true
-    esp.Billboard.MaxDistance = 6000
+    esp.Billboard.MaxDistance = 5000
 
     esp.NameLabel.Size = UDim2.new(1, 0, 0, 13)
-    esp.NameLabel.Position = UDim2.new(0, 0, 0, 0)
     esp.NameLabel.BackgroundTransparency = 1
     esp.NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
     esp.NameLabel.Font = Enum.Font.GothamBold
@@ -662,7 +674,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- [[ COMBAT & TRACKING LOOP ]] --
+-- [[ COMBAT & TRACKING HEARTBEAT ]] --
 RunService.Heartbeat:Connect(function()
     ApplyGodmodeDefense()
     EnsureHakiAndPvP()
@@ -686,9 +698,9 @@ RunService.Heartbeat:Connect(function()
             ClearFlightPhysics()
             if RefreshPList then RefreshPList() end
             
-            -- If AutoServerHop is enabled and victim is dead
+            -- Auto Server Hop on Target Elimination
             if Config.AutoServerHop then
-                task.wait(1)
+                task.wait(0.5)
                 ServerHop()
             end
             return
@@ -697,7 +709,7 @@ RunService.Heartbeat:Connect(function()
         GlueDirectlyAboveHead(tHRP)
 
         local dist = (RootPart.Position - tHRP.Position).Magnitude
-        if dist <= (Config.OverheadDistance + 45) then
+        if dist <= (Config.OverheadDistance + 50) then
             ExecuteGodDamageStream(tHRP)
         end
     else
@@ -706,24 +718,7 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- Multi-Threaded Damage Packet Booster
-task.spawn(function()
-    while true do
-        task.wait(0.02)
-        if Config.Enabled and Config.DamageExploit and Config.SelectedPlayer and Config.SelectedPlayer.Character then
-            local tHRP = SafeGetHRP(Config.SelectedPlayer.Character)
-            local tHum = Config.SelectedPlayer.Character:FindFirstChildOfClass("Humanoid")
-            if tHRP and tHum and tHum.Health > 0 and RootPart then
-                local dist = (RootPart.Position - tHRP.Position).Magnitude
-                if dist <= (Config.OverheadDistance + 45) then
-                    ExecuteGodDamageStream(tHRP)
-                end
-            end
-        end
-    end
-end)
-
--- [[ DRAG HELPER ]] --
+-- [[ UNIVERSAL DRAG ]] --
 local function EnableUniversalDrag(frame, dragHandle)
     dragHandle = dragHandle or frame
     local dragging, dragInput, dragStart, startPos
@@ -762,7 +757,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V120_FORENSIC"
+    ScreenGui.Name = "NONTK_V130_FORENSIC"
     ScreenGui.ResetOnSpawn = false
     
     local parentGui = (gethui and gethui()) or (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or LocalPlayer:WaitForChild("PlayerGui")
@@ -770,7 +765,7 @@ local function BuildUI()
 
     -- Mobile FAB
     local MobileFAB = Instance.new("ImageButton", ScreenGui)
-    MobileFAB.Size = UDim2.new(0, 48, 0, 48)
+    MobileFAB.Size = UDim2.new(0, 46, 0, 46)
     MobileFAB.Position = UDim2.new(0.04, 0, 0.25, 0)
     MobileFAB.BackgroundColor3 = Color3.fromRGB(15, 25, 35)
     MobileFAB.BorderSizePixel = 0
@@ -808,7 +803,7 @@ local function BuildUI()
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 10.5
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "FORENSIC v120 | IDLE"
+    MiniLabel.Text = "FORENSIC v130 | IDLE"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 54, 1, -8)
@@ -847,7 +842,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11 or 12
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚡ NONTK v120 — PVP FORENSIC GOD MATRIX"
+    HeaderTitle.Text = "⚡ NONTK v130 — SMOOTH GOD PREDATOR"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -1165,7 +1160,7 @@ local function BuildUI()
     -- Core Features
     AddToggle("Infinite Damage Stream (15x Multi-Hit)", Config.DamageExploit, function(v) Config.DamageExploit = v end)
     AddToggle("Permanent Race V4 Awakening (Loop)", Config.PermaRaceV4, function(v) Config.PermaRaceV4 = v end)
-    AddToggle("Auto Aim Skills (Z, X, C, V Lock)", Config.AutoAimSkills, function(v) Config.AutoAimSkills = v end)
+    AddToggle("Auto Aim Skills (Z, X, C, V Silent Aim)", Config.AutoAimSkills, function(v) Config.AutoAimSkills = v end)
     AddToggle("Infinite Geppo & Zero-CD Soru", Config.InfiniteGeppo, function(v) Config.InfiniteGeppo = v; Config.InfiniteSoru = v end)
     AddToggle("Auto Server Hop (When Bounty Dead)", Config.AutoServerHop, function(v) Config.AutoServerHop = v end)
     AddToggle("Fast M1 Attack Spam (300 Studs)", Config.FastM1, function(v) Config.FastM1 = v end)
@@ -1202,7 +1197,7 @@ local function BuildUI()
                 MiniLabel.Text = "🎯 Select Player from List"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "FORENSIC v120 | IDLE"
+                MiniLabel.Text = "FORENSIC v130 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
