@@ -1,5 +1,6 @@
--- [[ NONTK Bounty Hunter v81 FINAL ]] --
+-- [[ NONTK Bounty Hunter v81 FINAL — HYPER EDITION ]] --
 -- Speed Slider, Collapsible UI, Auto Hunt Loop, Anti-Rollback 160 studs/s
+-- MOD: Hyper Attack Speed + Instant Movement Physics
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -20,7 +21,7 @@ local Config = {
     TargetMode = "Auto",
     SelectedPlayer = nil,
     MinBountyLevel = 20,
-    OverheadDistance = 11,
+    OverheadDistance = 7,          -- ↓ was 11, closer = faster melee connect
     FlySpeed = 160,
     FastAttack = true,
     AutoHaki = true,
@@ -28,11 +29,11 @@ local Config = {
     SkillSpam = true,
     Skills = {"Z", "X", "C", "V"},
     Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.5,
-    DamageTestTime = 0.8,
+    WeaponSwitchDelay = 0.2,       -- ↓ was 0.5
+    DamageTestTime = 0.4,          -- ↓ was 0.8
     BlacklistTime = 90,
     AutoHunt = true,
-    HuntInterval = 0.1
+    HuntInterval = 0.05            -- ↓ was 0.1
 }
 
 local CurrentTarget = nil
@@ -92,6 +93,7 @@ local function IsPvPActive(player)
     return true
 end
 
+-- HYPER: MaxForce 1e6 + P 9999 = zero-lag velocity snap
 local function SetupFlightPhysics()
     if not RootPart then return end
     if not FlightBodyVelocity or FlightBodyVelocity.Parent ~= RootPart then
@@ -99,17 +101,17 @@ local function SetupFlightPhysics()
         FlightBodyVelocity = Instance.new("BodyVelocity")
         FlightBodyVelocity.Name = "NONTKGlide"
         FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
-        FlightBodyVelocity.MaxForce = Vector3.new(4e4, 4e4, 4e4)
-        FlightBodyVelocity.P = 1250
+        FlightBodyVelocity.MaxForce = Vector3.new(1e6, 1e6, 1e6)   -- ↑ was 4e4
+        FlightBodyVelocity.P = 9999                                  -- ↑ was 1250
         FlightBodyVelocity.Parent = RootPart
     end
     if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
         if FlightBodyGyro then FlightBodyGyro:Destroy() end
         FlightBodyGyro = Instance.new("BodyGyro")
         FlightBodyGyro.Name = "NONTKGyro"
-        FlightBodyGyro.MaxTorque = Vector3.new(4e4, 4e4, 4e4)
-        FlightBodyGyro.P = 1250
-        FlightBodyGyro.D = 100
+        FlightBodyGyro.MaxTorque = Vector3.new(1e6, 1e6, 1e6)       -- ↑ was 4e4
+        FlightBodyGyro.P = 9999                                       -- ↑ was 1250
+        FlightBodyGyro.D = 50                                         -- ↓ was 100, less wobble
         FlightBodyGyro.CFrame = RootPart.CFrame
         FlightBodyGyro.Parent = RootPart
     end
@@ -121,7 +123,8 @@ local function ClearFlightPhysics()
     if Humanoid then Humanoid.PlatformStand = false end
 end
 
-RunService.Stepped:Connect(function()
+-- HYPER: PreSimulation runs before physics solve = guaranteed frame-0 CanCollide off
+RunService.PreSimulation:Connect(function()
     if Config.Enabled and Character and RootPart then
         for _, part in ipairs(Character:GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = false end
@@ -227,15 +230,16 @@ local function ExecuteFastAttack(targetHRP)
     VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
+-- HYPER: inter-key delay halved → 0.01/0.01
 local function CastSkills(targetHRP, targetHum)
     if not Config.SkillSpam or not targetHRP or targetHum.Health <= 0 then return end
     pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
     for _, key in ipairs(Config.Skills) do
         if not CurrentTarget or targetHum.Health <= 0 then break end
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
-        task.wait(0.02)
+        task.wait(0.01)   -- ↓ was 0.02
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
-        task.wait(0.03)
+        task.wait(0.01)   -- ↓ was 0.03
     end
 end
 
@@ -249,12 +253,17 @@ local function GlideToTarget(targetHRP)
     FlightBodyGyro.CFrame = CFrame.new(curPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
     if dist > 10 then
         FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
+    elseif dist > 3 then
+        -- HYPER: proportional slow-in when very close to avoid overshoot
+        FlightBodyVelocity.Velocity = delta.Unit * (Config.FlySpeed * (dist / 10))
     else
         FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        -- HYPER: hard snap CFrame when within melee range
         RootPart.CFrame = CFrame.new(targetPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
     end
 end
 
+-- HUNT LOOP: 0.05s interval
 task.spawn(function()
     while true do
         task.wait(Config.HuntInterval)
@@ -276,9 +285,10 @@ task.spawn(function()
     end
 end)
 
+-- COMBAT LOOP: 0.008s (was 0.015) = ~125 ticks/s attack polling
 task.spawn(function()
     while true do
-        task.wait(0.015)
+        task.wait(0.008)   -- ↓ was 0.015
         if Config.Enabled then
             EnsurePvPAndHaki()
             if Config.TargetMode == "Manual" and Config.SelectedPlayer then
@@ -405,7 +415,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = 13
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚔ NONTK BOUNTY HUNTER v81"
+    HeaderTitle.Text = "⚔ NONTK BOUNTY HUNTER v81 HYPER"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 36, 0, 28)
@@ -483,7 +493,7 @@ local function BuildUI()
     local SliderFill = Instance.new("Frame", SliderTrack)
     SliderFill.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
     SliderFill.BorderSizePixel = 0
-    SliderFill.Size = UDim2.new(0.733, 0, 1, 0) -- (160-50)/(200-50) = 0.733
+    SliderFill.Size = UDim2.new(0.733, 0, 1, 0)
     Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(1, 0)
 
     local SliderKnob = Instance.new("TextButton", SliderTrack)
@@ -663,7 +673,6 @@ local function BuildUI()
         while ScreenGui.Parent do
             task.wait(0.25)
 
-            -- Status Dot Color
             if Config.Enabled and CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 50)
             elseif Config.Enabled then
@@ -672,7 +681,6 @@ local function BuildUI()
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
             end
 
-            -- MiniBar Label
             if not Config.Enabled then
                 MiniLabel.Text = "NONTK | IDLE"
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
@@ -682,7 +690,6 @@ local function BuildUI()
                 MiniLabel.Text = "🔍 NONTK Hunting... | " .. Config.FlySpeed .. " s/s"
             end
 
-            -- Player Buttons
             for p, btn in pairs(PlayerButtons) do
                 if p and p.Parent then
                     local lvl = GetPlayerLevel(p)
@@ -694,7 +701,6 @@ local function BuildUI()
                 end
             end
 
-            -- Nearest Radar
             local nearestP, minD = nil, math.huge
             if RootPart then
                 for _, p in ipairs(Players:GetPlayers()) do
@@ -715,7 +721,6 @@ local function BuildUI()
                 NearestRadar.Text = "🎯 Nearest: No PvP-enabled players found"
             end
 
-            -- Status Box
             if not Config.Enabled then
                 Status.Text = string.format("⏸ NONTK IDLE\nSpeed: %d studs/s | Mode: %s\nBuso & PvP: Auto | Hunt: %s", Config.FlySpeed, Config.TargetMode, Config.AutoHunt and "ON" or "OFF")
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
