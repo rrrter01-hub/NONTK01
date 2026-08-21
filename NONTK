@@ -1,5 +1,5 @@
--- [[ NONTK BOUNTY HUNTER v99 — RELENTLESS DEATH-LOCK EXECUTIONER ]] --
--- Features: 100% Non-Stop Relentless Attack Until Dead, Anti-Rollback Safe Warp, Speed Slider (50–350 studs/s), Spy Cam, Race V4
+-- [[ NONTK BOUNTY HUNTER v100 — PURE ASSASSIN CORE ]] --
+-- Features: Clean Manual Lock, Relentless Non-Stop Attack, Speed Slider (50–350 studs/s), Spy Cam, Race V4, Mobile/PC Hub
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -18,25 +18,12 @@ local Humanoid = Character:WaitForChild("Humanoid")
 
 local IsMobile = UserInputService.TouchEnabled and not UserInputService.KeyboardEnabled
 
--- [[ SMART SEA DETECTION & SAFE LOCATIONS ]] --
-local function GetSafeHomeCFrame()
-    local placeId = game.PlaceId
-    if placeId == 4442272183 or Workspace:FindFirstChild("Cafe") then
-        return CFrame.new(-380.5, 73.2, 297.8) -- Sea 2: Cafe Safe Zone
-    elseif placeId == 7449423635 or Workspace:FindFirstChild("Mansion") then
-        return CFrame.new(-12463.8, 375.0, -7551.5) -- Sea 3: Mansion Safe Zone
-    else
-        return CFrame.new(979.7, 16.5, 1429.2) -- Sea 1: Starter Island
-    end
-end
-
 -- [[ CONFIG ]] --
 local Config = {
     Enabled = false,
-    SelectedPlayer = nil,      -- เป้าหมายที่เลือก (เมื่อตายสนิท 0 HP ถึงจะรีเซ็ตเป็น nil)
+    SelectedPlayer = nil,      -- เป้าหมายที่เลือก (เมื่อตายสนิท 0 HP จะรีเซ็ตเป็น nil ทันที)
     Spectate = false,          -- สอดส่องกล้องดูผู้เล่นที่เลือก (Spy Cam)
-    AutoWarpHomeOnKill = false, -- วาปกลับเกาะเซฟอัตโนมัติทันทีที่ฆ่าเสร็จ
-    FlySpeed = 240,            -- ความเร็วบิน (50 - 350 studs/s ปรับได้อิสระ)
+    FlySpeed = 220,            -- ความเร็วบิน (50 - 350 studs/s ปรับได้อิสระ)
     OverheadDistance = 11,     -- ความสูงเหนือหัวเป้าหมาย (studs)
     FastAttack = true,
     AutoHaki = true,
@@ -46,7 +33,7 @@ local Config = {
     SkillSpam = true,
     Skills = {"Z", "X", "C", "V"},
     Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.28,
+    WeaponSwitchDelay = 0.3,
     
     -- Godmode / Desync Defense
     GodmodeDefense = true,
@@ -107,38 +94,6 @@ local function GetPlayerHealth(player)
         if hum then return math.floor(hum.Health), math.floor(hum.MaxHealth) end
     end
     return 0, 0
-end
-
--- [[ FIXED ANTI-ROLLBACK SAFE WARP ]] --
-local function StopFlight()
-    if FlightBodyVelocity then FlightBodyVelocity:Destroy(); FlightBodyVelocity = nil end
-    if FlightBodyGyro then FlightBodyGyro:Destroy(); FlightBodyGyro = nil end
-    if Humanoid then Humanoid.PlatformStand = false end
-    if RootPart then
-        RootPart.AssemblyLinearVelocity = Vector3.zero
-        RootPart.AssemblyAngularVelocity = Vector3.zero
-    end
-end
-
-local function WarpToSafeHome()
-    if not RootPart or not Character then return end
-    
-    Config.SelectedPlayer = nil
-    StopFlight()
-
-    local safeCF = GetSafeHomeCFrame()
-
-    task.spawn(function()
-        for i = 1, 3 do
-            RootPart.CFrame = safeCF + Vector3.new(0, 3, 0)
-            RootPart.AssemblyLinearVelocity = Vector3.zero
-            RootPart.AssemblyAngularVelocity = Vector3.zero
-            task.wait(0.05)
-        end
-        RootPart.Anchored = true
-        task.wait(0.12)
-        RootPart.Anchored = false
-    end)
 end
 
 -- [[ SPECTATE CAMERA ]] --
@@ -302,7 +257,8 @@ local function ApplyGodmodeDefense()
         local hpPct = (Humanoid.Health / math.max(1, Humanoid.MaxHealth)) * 100
         if hpPct <= Config.EscapeHPPercent then
             IsEscaping = true
-            StopFlight()
+            if FlightBodyVelocity then FlightBodyVelocity:Destroy(); FlightBodyVelocity = nil end
+            if FlightBodyGyro then FlightBodyGyro:Destroy(); FlightBodyGyro = nil end
             RootPart.CFrame = RootPart.CFrame + Vector3.new(0, 15, 0)
         else
             IsEscaping = false
@@ -312,13 +268,23 @@ local function ApplyGodmodeDefense()
     end
 end
 
--- [[ STABLE OVERHEAD FLIGHT ]] --
+-- [[ CLEAN STABLE FLIGHT ENGINE ]] --
+local function StopFlight()
+    if FlightBodyVelocity then FlightBodyVelocity:Destroy(); FlightBodyVelocity = nil end
+    if FlightBodyGyro then FlightBodyGyro:Destroy(); FlightBodyGyro = nil end
+    if Humanoid then Humanoid.PlatformStand = false end
+    if RootPart then
+        RootPart.AssemblyLinearVelocity = Vector3.zero
+        RootPart.AssemblyAngularVelocity = Vector3.zero
+    end
+end
+
 local function SetupFlightPhysics()
     if not RootPart then return end
     if not FlightBodyVelocity or FlightBodyVelocity.Parent ~= RootPart then
         if FlightBodyVelocity then FlightBodyVelocity:Destroy() end
         FlightBodyVelocity = Instance.new("BodyVelocity")
-        FlightBodyVelocity.Name = "NONTK_StableVel"
+        FlightBodyVelocity.Name = "NONTK_FlightVel"
         FlightBodyVelocity.Velocity = Vector3.zero
         FlightBodyVelocity.MaxForce = Vector3.new(1e7, 1e7, 1e7)
         FlightBodyVelocity.P = 3000
@@ -327,7 +293,7 @@ local function SetupFlightPhysics()
     if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
         if FlightBodyGyro then FlightBodyGyro:Destroy() end
         FlightBodyGyro = Instance.new("BodyGyro")
-        FlightBodyGyro.Name = "NONTK_StableGyro"
+        FlightBodyGyro.Name = "NONTK_FlightGyro"
         FlightBodyGyro.MaxTorque = Vector3.new(1e7, 1e7, 1e7)
         FlightBodyGyro.P = 3000
         FlightBodyGyro.D = 40
@@ -450,7 +416,7 @@ local function SwitchWeapon()
     CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
 end
 
--- [[ RELENTLESS FAST ATTACK (NON-STOP STRIKES) ]] --
+-- [[ RELENTLESS FAST ATTACK ]] --
 local function ExecuteRelentlessAttack(targetHRP)
     if not targetHRP then return end
     EnsureWeaponEquipped()
@@ -604,7 +570,7 @@ RunService.RenderStepped:Connect(function()
                 esp.Billboard.Enabled = true
 
                 esp.NameLabel.Text = string.format("%s [Lv.%d]", p.Name, st.Details.Level)
-                esp.StatusLabel.Text = isTarget and "[🎯 DEATH-LOCKED]" or st.Badge
+                esp.StatusLabel.Text = isTarget and "[🎯 TARGET]" or st.Badge
                 esp.StatusLabel.TextColor3 = renderColor
                 esp.DistLabel.Text = string.format("%d studs | HP: %d/%d", st.Details.Distance, st.Details.Health, st.Details.MaxHealth)
 
@@ -622,8 +588,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- [[ RELENTLESS DEATH-LOCK COMBAT LOOP ]] --
--- ไม่มีการหยุดตีเด็ดขาดจนกว่าศัตรูจะตายสนิท 0 HP
+-- [[ RELENTLESS ASSASSIN COMBAT LOOP ]] --
 RunService.Heartbeat:Connect(function()
     ApplyGodmodeDefense()
 
@@ -639,15 +604,10 @@ RunService.Heartbeat:Connect(function()
         local tHRP = target.Character:FindFirstChild("HumanoidRootPart")
         local tHum = target.Character:FindFirstChild("Humanoid")
 
-        -- ตรวจสอบว่าศัตรูตายสนิทหรือยัง (Only reset when REALLY dead)
+        -- ถ้าศัตรูตายแล้ว (HP <= 0) หรือตัวละครหาย -> รีเซ็ตเป้าหมายเป็น nil ทันที
         if not tHum or tHum.Health <= 0 then
             Config.SelectedPlayer = nil
             StopFlight()
-            
-            if Config.AutoWarpHomeOnKill then
-                WarpToSafeHome()
-            end
-
             if RefreshPList then RefreshPList() end
             return
         end
@@ -655,18 +615,13 @@ RunService.Heartbeat:Connect(function()
         -- บินล็อคติดแน่นและกระหน่ำโจมตีแบบไม่หยุดพัก
         if tHRP then
             StableGlideToTarget(tHRP)
-            local dist = (RootPart.Position - tHRP.Position).Magnitude
-            
-            -- ปลุกพลัง V4
             TriggerRaceV4()
 
-            -- สลับอาวุธตามจังหวะ
             if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
                 SwitchWeapon()
                 LastWeaponSwitch = tick()
             end
 
-            -- กระหน่ำ Fast Attack และ สแปมสกิลตลอดเวลา
             ExecuteRelentlessAttack(tHRP)
             CastSkillsNonStop(tHum)
         end
@@ -715,12 +670,12 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V99_RELENTLESS"
+    ScreenGui.Name = "NONTK_V100_PURE"
     ScreenGui.ResetOnSpawn = false
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
 
-    -- Mobile FAB
+    -- Mobile Floating Button
     local MobileFAB = Instance.new("ImageButton", ScreenGui)
     MobileFAB.Size = UDim2.new(0, 48, 0, 48)
     MobileFAB.Position = UDim2.new(0.04, 0, 0.25, 0)
@@ -760,7 +715,7 @@ local function BuildUI()
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 11
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "NONTK v99 | READY"
+    MiniLabel.Text = "NONTK v100 | READY"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 52, 1, -8)
@@ -774,8 +729,8 @@ local function BuildUI()
 
     -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, IsMobile and 360 or 440, 0, IsMobile and 540 or 600)
-    Main.Position = UDim2.new(0.5, IsMobile and -180 or -220, 0.04, 0)
+    Main.Size = UDim2.new(0, IsMobile and 360 or 440, 0, IsMobile and 500 or 560)
+    Main.Position = UDim2.new(0.5, IsMobile and -180 or -220, 0.05, 0)
     Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     Main.BorderSizePixel = 0
     Main.Visible = false
@@ -799,7 +754,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11.5 or 13
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚔ NONTK v99 — DEATH-LOCK ASSASSIN"
+    HeaderTitle.Text = "⚔ NONTK v100 — PURE ASSASSIN HUB"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -858,8 +813,8 @@ local function BuildUI()
         return page, btn
     end
 
-    local LockPage = CreateTab("Target & Speed", "🚀", 0.0, 0.5)
-    local ConfigPage = CreateTab("Settings & Escape", "⚙", 0.5, 0.5)
+    local LockPage = CreateTab("Target & Speed", "🎯", 0.0, 0.5)
+    local ConfigPage = CreateTab("Settings & Godmode", "⚙", 0.5, 0.5)
 
     local function SwitchTab(tabName)
         for name, page in pairs(TabPages) do
@@ -890,17 +845,6 @@ local function BuildUI()
         LockMasterToggle.Text = Config.Enabled and "▶ COMBAT SYSTEM: ACTIVE" or "⏸ COMBAT SYSTEM: OFF"
         if not Config.Enabled then StopFlight() end
     end)
-
-    -- Safe Home Warp Button
-    local SafeWarpBtn = Instance.new("TextButton", LockPage)
-    SafeWarpBtn.Size = UDim2.new(1, 0, 0, 34)
-    SafeWarpBtn.BackgroundColor3 = Color3.fromRGB(0, 120, 200)
-    SafeWarpBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SafeWarpBtn.Font = Enum.Font.GothamBold
-    SafeWarpBtn.TextSize = 11
-    SafeWarpBtn.Text = "🏠 INSTANT WARP TO SAFE HOME (STARTER / CAFE / MANSION)"
-    Instance.new("UICorner", SafeWarpBtn).CornerRadius = UDim.new(0, 6)
-    SafeWarpBtn.MouseButton1Click:Connect(WarpToSafeHome)
 
     -- Speed Controller Panel
     local SpeedCard = Instance.new("Frame", LockPage)
@@ -1100,7 +1044,7 @@ local function BuildUI()
     TargetStatusCard.Font = Enum.Font.Gotham
     TargetStatusCard.TextSize = 9.5
     TargetStatusCard.TextWrapped = true
-    TargetStatusCard.Text = "Selected Target: NONE\nClick a player from the list below to DEATH-LOCK."
+    TargetStatusCard.Text = "Selected Target: NONE\nClick a player from the list below to LOCK & ATTACK."
     Instance.new("UICorner", TargetStatusCard).CornerRadius = UDim.new(0, 6)
 
     local ClearTargetBtn = Instance.new("TextButton", LockPage)
@@ -1152,7 +1096,7 @@ local function BuildUI()
                 b.Font = Enum.Font.GothamBold
                 b.TextSize = 9.5
                 b.TextXAlignment = Enum.TextXAlignment.Left
-                b.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 DEATH-LOCK]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
+                b.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
                 Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
                 PButtons[p] = b
 
@@ -1174,7 +1118,7 @@ local function BuildUI()
     Players.PlayerAdded:Connect(RefreshPList)
     Players.PlayerRemoving:Connect(RefreshPList)
 
-    -- [[ TAB 2: SETTINGS & ESCAPE ]] --
+    -- [[ TAB 2: SETTINGS & GODMODE ]] --
     local function AddToggle(parent, title, state, callback)
         local btn = Instance.new("TextButton", parent)
         btn.Size = UDim2.new(1, 0, 0, 34)
@@ -1192,7 +1136,6 @@ local function BuildUI()
         end)
     end
 
-    AddToggle(ConfigPage, "Auto-Warp to Safe Home on Kill (หนีทันทีหลังฆ่า)", Config.AutoWarpHomeOnKill, function(v) Config.AutoWarpHomeOnKill = v end)
     AddToggle(ConfigPage, "Auto Race V4 Awakening", Config.AutoRaceV4, function(v) Config.AutoRaceV4 = v end)
     AddToggle(ConfigPage, "Desync Godmode Matrix", Config.GodmodeDefense, function(v) Config.GodmodeDefense = v end)
     AddToggle(ConfigPage, "Anti-Stun / Anti-Ragdoll", Config.AntiStun, function(v) Config.AntiStun = v end)
@@ -1204,8 +1147,8 @@ local function BuildUI()
     AddToggle(ConfigPage, "Fast Attack Exploit", Config.FastAttack, function(v) Config.FastAttack = v end)
     AddToggle(ConfigPage, "Auto Skill Spam (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
 
-    LockPage.CanvasSize = UDim2.new(0, 0, 0, 560)
-    ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 420)
+    LockPage.CanvasSize = UDim2.new(0, 0, 0, 520)
+    ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 380)
 
     -- Realtime UI Refresh Loop
     task.spawn(function()
@@ -1225,14 +1168,14 @@ local function BuildUI()
                 MiniLabel.Text = "🎯 Select Target to Lock"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "NONTK v99 | IDLE"
+                MiniLabel.Text = "NONTK v100 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
                 if p and p.Parent then
                     local st = GetPlayerCombatState(p)
                     local isSelected = (Config.SelectedPlayer == p)
-                    btn.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 DEATH-LOCK]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
+                    btn.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
                     btn.BackgroundColor3 = isSelected and Color3.fromRGB(200, 30, 50) or Color3.fromRGB(18, 22, 28)
                     btn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or st.Color
                 end
@@ -1243,10 +1186,10 @@ local function BuildUI()
             elseif cur and cur.Character and cur.Character:FindFirstChild("Humanoid") then
                 local st = GetPlayerCombatState(cur)
                 local spyMsg = Config.Spectate and " | 👁️ SPY CAM: ON" or ""
-                TargetStatusCard.Text = string.format("⚔ DEATH-LOCKED: %s (Lv.%d)%s\n🔴 RELENTLESS ATTACKING (HP: %d/%d)\nAttacking non-stop until target dies 100%%.",
-                    cur.Name, st.Details.Level, spyMsg, st.Details.Health, st.Details.MaxHealth)
+                TargetStatusCard.Text = string.format("⚔ LOCKED: %s (Lv.%d)%s\n🔴 ATTACKING (HP: %d/%d | Dist: %d studs)\nAttacking non-stop until target dies.",
+                    cur.Name, st.Details.Level, spyMsg, st.Details.Health, st.Details.MaxHealth, st.Details.Distance)
             else
-                TargetStatusCard.Text = string.format("🎯 STANDING BY (TARGET: NIL)\nSpeed: %d studs/s | SafeHeight: %d studs\nSelect a player from the list to death-lock.", Config.FlySpeed, Config.OverheadDistance)
+                TargetStatusCard.Text = string.format("🎯 STANDING BY (TARGET: NIL)\nSpeed: %d studs/s | SafeHeight: %d studs\nSelect a player from the list to lock & attack.", Config.FlySpeed, Config.OverheadDistance)
             end
         end
     end)
