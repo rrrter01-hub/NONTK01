@@ -1,6 +1,5 @@
 -- [[ NONTK Bounty Hunter v81 FINAL ]] --
 -- Speed Slider, Collapsible UI, Auto Hunt Loop, Anti-Rollback 160 studs/s
--- COMBAT UPGRADE: Teleport-behind, Hitbox extend, Remote spam, Fruit aim lock
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -203,117 +202,42 @@ local function SwitchWeapon()
     CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
 end
 
--- ============================================================
--- [[ COMBAT UPGRADE — ของเดิมทุกอย่าง แก้แค่ 2 function นี้ ]]
--- ============================================================
-
 local function ExecuteFastAttack(targetHRP)
     if not Config.FastAttack or not targetHRP then return end
-
-    -- 1) Snap ไปด้านหลังเป้า ทำให้ melee ติดแน่นอน ไม่โดนสวน
-    pcall(function()
-        local behind = targetHRP.CFrame * CFrame.new(0, 1, 3)
-        RootPart.CFrame = CFrame.new(behind.Position, targetHRP.Position)
-    end)
-
-    -- 2) CombatFramework hack — เพิ่ม hitbox + damage multiplier
     pcall(function()
         if not ActiveController then SetupCombatHooks() end
         if ActiveController then
             ActiveController.timeToNextAttack = 0
             ActiveController.attacking = false
             ActiveController.blocking = false
-            ActiveController.hitboxMagnitude = 60   -- ขยาย hitbox detect
-            ActiveController.increment = 5          -- damage multiplier
-            if ActiveController.attack then
-                for i = 1, 3 do                     -- ตี 3 รอบต่อ frame
-                    ActiveController:attack()
-                    task.wait(0.005)
-                end
-            end
-            if ActiveController.bladeHit then
-                ActiveController.bladeHit(targetHRP, {targetHRP})
-            end
+            ActiveController.hitboxMagnitude = 100
+            ActiveController.increment = 3
+            if ActiveController.attack then ActiveController:attack() end
+            if ActiveController.bladeHit then ActiveController.bladeHit(targetHRP, {targetHRP}) end
         end
     end)
-
-    -- 3) Remote fire — ยิง RegisterAttack + RegisterHit ซ้ำ
     pcall(function()
-        if RegisterAttack then
-            RegisterAttack:FireServer(0)
-        end
-        if RegisterHit then
-            -- ยิงซ้ำ 3 รอบ ด้วย target part list
-            for i = 1, 3 do
-                RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}})
-                task.wait(0.005)
-            end
-        end
+        if RegisterAttack then RegisterAttack:FireServer(0) end
+        if RegisterHit then RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}}) end
     end)
-
-    -- 4) Tool activate spam
     local tool = Character:FindFirstChildOfClass("Tool")
-    if tool then
-        for i = 1, 3 do
-            tool:Activate()
-            task.wait(0.005)
-        end
-    end
-
-    -- 5) VirtualUser click
+    if tool then tool:Activate() end
     VirtualUser:CaptureController()
     VirtualUser:Button1Down(Vector2.new(0, 0))
-    task.wait(0.008)
     VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
 local function CastSkills(targetHRP, targetHum)
     if not Config.SkillSpam or not targetHRP or targetHum.Health <= 0 then return end
-
-    -- ล็อค camera ไปที่เป้าก่อนกด skill
-    pcall(function()
-        Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
-    end)
-
-    -- หา Blox Fruit tool แล้วสลับก่อน skill ถ้ามี
-    pcall(function()
-        local backpack = LocalPlayer:FindFirstChild("Backpack")
-        if backpack then
-            for _, tool in ipairs(backpack:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local n = tool.Name:lower()
-                    if n:find("fruit") or n:find("devil") or tool:GetAttribute("WeaponType") == "Blox Fruit" then
-                        Humanoid:EquipTool(tool)
-                        task.wait(0.05)
-                        break
-                    end
-                end
-            end
-        end
-    end)
-
+    pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
     for _, key in ipairs(Config.Skills) do
         if not CurrentTarget or targetHum.Health <= 0 then break end
-        -- re-aim ทุก skill
-        pcall(function()
-            Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
-        end)
         VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
         task.wait(0.02)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
         task.wait(0.03)
-        -- ยิง remote หลัง skill cast แต่ละครั้ง
-        pcall(function()
-            if RegisterHit then
-                RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}})
-            end
-        end)
     end
 end
-
--- ============================================================
--- [[ ของเดิมทุกอย่างตั้งแต่นี้ไป ไม่แตะ ]]
--- ============================================================
 
 local function GlideToTarget(targetHRP)
     SetupFlightPhysics()
@@ -559,7 +483,7 @@ local function BuildUI()
     local SliderFill = Instance.new("Frame", SliderTrack)
     SliderFill.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
     SliderFill.BorderSizePixel = 0
-    SliderFill.Size = UDim2.new(0.733, 0, 1, 0)
+    SliderFill.Size = UDim2.new(0.733, 0, 1, 0) -- (160-50)/(200-50) = 0.733
     Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(1, 0)
 
     local SliderKnob = Instance.new("TextButton", SliderTrack)
@@ -739,6 +663,7 @@ local function BuildUI()
         while ScreenGui.Parent do
             task.wait(0.25)
 
+            -- Status Dot Color
             if Config.Enabled and CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 50)
             elseif Config.Enabled then
@@ -747,6 +672,7 @@ local function BuildUI()
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
             end
 
+            -- MiniBar Label
             if not Config.Enabled then
                 MiniLabel.Text = "NONTK | IDLE"
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
@@ -756,6 +682,7 @@ local function BuildUI()
                 MiniLabel.Text = "🔍 NONTK Hunting... | " .. Config.FlySpeed .. " s/s"
             end
 
+            -- Player Buttons
             for p, btn in pairs(PlayerButtons) do
                 if p and p.Parent then
                     local lvl = GetPlayerLevel(p)
@@ -767,6 +694,7 @@ local function BuildUI()
                 end
             end
 
+            -- Nearest Radar
             local nearestP, minD = nil, math.huge
             if RootPart then
                 for _, p in ipairs(Players:GetPlayers()) do
@@ -787,6 +715,7 @@ local function BuildUI()
                 NearestRadar.Text = "🎯 Nearest: No PvP-enabled players found"
             end
 
+            -- Status Box
             if not Config.Enabled then
                 Status.Text = string.format("⏸ NONTK IDLE\nSpeed: %d studs/s | Mode: %s\nBuso & PvP: Auto | Hunt: %s", Config.FlySpeed, Config.TargetMode, Config.AutoHunt and "ON" or "OFF")
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
