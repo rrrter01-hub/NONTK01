@@ -1,5 +1,5 @@
--- [[ NONTK BOUNTY HUNTER v93 — SPY CAM & MANUAL ASSASSIN ]] --
--- Features: Live Spectate / Spy Cam, Manual Player Lock, Auto-Reset to Nil on Death, Race V4, Turbo Glide, Mobile/PC Hub
+-- [[ NONTK BOUNTY HUNTER v94 — FULL CONTROLS & SPY CAM ]] --
+-- Features: Interactive Speed Slider (50–350 studs/s), Overhead Height Adjuster, Spy Cam, Manual Assassin Lock, Race V4, Mobile/PC Hub
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -23,9 +23,9 @@ local Config = {
     Enabled = false,
     SelectedPlayer = nil,      -- เป้าหมายที่เลือก (เมื่อตายจะรีเซ็ตเป็น nil ทันที)
     Spectate = false,          -- สอดส่องกล้องดูผู้เล่นที่เลือก (Spy Cam)
-    OverheadDistance = 12,
+    OverheadDistance = 12,     -- ความสูงเหนือหัวเป้าหมาย (studs)
     LockTolerance = 16,
-    FlySpeed = 260,
+    FlySpeed = 260,            -- ความเร็วบินพุ่ง (50 - 350 studs/s)
     FastAttack = true,
     AutoHaki = true,
     AutoKen = true,
@@ -118,7 +118,6 @@ local function UpdateSpectateCamera()
         end
     end
 
-    -- คืนกล้องกลับมาที่ตัวเราเองเมื่อไม่ได้ส่อง หรือเป้าหมายตาย/ว่างเปล่า
     if Character and Character:FindFirstChild("Humanoid") then
         if Camera.CameraSubject ~= Character.Humanoid then
             Camera.CameraSubject = Character.Humanoid
@@ -599,7 +598,6 @@ RunService.Heartbeat:Connect(function()
         local tHum = target.Character:FindFirstChild("Humanoid")
         local st = GetPlayerCombatState(target)
 
-        -- เมื่อเป้าหมายตาย หรือ เดินเข้า SafeZone -> รีเซ็ตเป็นค่าว่าง (nil) ทันที
         if not tHum or tHum.Health <= 0 or not st.IsAttackable or not tHRP then
             Config.SelectedPlayer = nil
             ClearFlightPhysics()
@@ -611,7 +609,6 @@ RunService.Heartbeat:Connect(function()
             return
         end
 
-        -- บินพุ่งล็อคโจมตี
         TurboGlideToTarget(tHRP)
         local dist = (RootPart.Position - tHRP.Position).Magnitude
         
@@ -692,7 +689,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V93_SPYCAM"
+    ScreenGui.Name = "NONTK_V94_TURBO_HUB"
     ScreenGui.ResetOnSpawn = false
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
@@ -737,7 +734,7 @@ local function BuildUI()
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 11
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "NONTK v93 | NO TARGET"
+    MiniLabel.Text = "NONTK v94 | NO TARGET"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 52, 1, -8)
@@ -751,8 +748,8 @@ local function BuildUI()
 
     -- Main Panel
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, IsMobile and 350 or 430, 0, IsMobile and 470 or 540)
-    Main.Position = UDim2.new(0.5, IsMobile and -175 or -215, 0.08, 0)
+    Main.Size = UDim2.new(0, IsMobile and 350 or 430, 0, IsMobile and 490 or 560)
+    Main.Position = UDim2.new(0.5, IsMobile and -175 or -215, 0.06, 0)
     Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     Main.BorderSizePixel = 0
     Main.Visible = false
@@ -776,7 +773,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11.5 or 13
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "👁️ NONTK v93 — SPY CAM & ASSASSIN"
+    HeaderTitle.Text = "⚡ NONTK v94 — TURBO ASSASSIN & SPY"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -835,7 +832,7 @@ local function BuildUI()
         return page, btn
     end
 
-    local LockPage = CreateTab("Target Lock", "🎯", 0.0, 0.5)
+    local LockPage = CreateTab("Target & Speed", "🎯", 0.0, 0.5)
     local ConfigPage = CreateTab("Settings & Godmode", "⚙", 0.5, 0.5)
 
     local function SwitchTab(tabName)
@@ -850,9 +847,9 @@ local function BuildUI()
     for name, btn in pairs(TabButtons) do
         btn.MouseButton1Click:Connect(function() SwitchTab(name) end)
     end
-    SwitchTab("Target Lock")
+    SwitchTab("Target & Speed")
 
-    -- [[ TAB 1: TARGET LOCK & SPY ]] --
+    -- [[ TAB 1: TARGET LOCK & SPEED CONTROLS ]] --
     local LockMasterToggle = Instance.new("TextButton", LockPage)
     LockMasterToggle.Size = UDim2.new(1, 0, 0, 38)
     LockMasterToggle.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
@@ -868,13 +865,143 @@ local function BuildUI()
         if not Config.Enabled then ClearFlightPhysics() end
     end)
 
+    -- Speed Slider Box (Restored & Enhanced)
+    local SpeedSection = Instance.new("Frame", LockPage)
+    SpeedSection.Size = UDim2.new(1, 0, 0, 56)
+    SpeedSection.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
+    Instance.new("UICorner", SpeedSection).CornerRadius = UDim.new(0, 6)
+
+    local SpeedLabel = Instance.new("TextLabel", SpeedSection)
+    SpeedLabel.Size = UDim2.new(0.72, 0, 0, 18)
+    SpeedLabel.Position = UDim2.new(0, 10, 0, 4)
+    SpeedLabel.BackgroundTransparency = 1
+    SpeedLabel.TextColor3 = Color3.fromRGB(180, 240, 220)
+    SpeedLabel.Font = Enum.Font.GothamBold
+    SpeedLabel.TextSize = 11
+    SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SpeedLabel.Text = "🚀 TURBO SPEED: " .. Config.FlySpeed .. " studs/s"
+
+    local STrack = Instance.new("Frame", SpeedSection)
+    STrack.Size = UDim2.new(0.72, 0, 0, 8)
+    STrack.Position = UDim2.new(0.14, 0, 0, 32)
+    STrack.BackgroundColor3 = Color3.fromRGB(30, 45, 50)
+    Instance.new("UICorner", STrack).CornerRadius = UDim.new(1, 0)
+
+    local SFill = Instance.new("Frame", STrack)
+    SFill.BackgroundColor3 = Color3.fromRGB(0, 220, 140)
+    SFill.BorderSizePixel = 0
+    SFill.Size = UDim2.new((Config.FlySpeed - 50) / 300, 0, 1, 0)
+    Instance.new("UICorner", SFill).CornerRadius = UDim.new(1, 0)
+
+    local SKnob = Instance.new("TextButton", STrack)
+    SKnob.Size = UDim2.new(0, 16, 0, 16)
+    SKnob.Position = UDim2.new((Config.FlySpeed - 50) / 300, -8, 0.5, -8)
+    SKnob.BackgroundColor3 = Color3.fromRGB(140, 255, 190)
+    SKnob.Text = ""
+    Instance.new("UICorner", SKnob).CornerRadius = UDim.new(1, 0)
+
+    local function UpdateSpeedUI()
+        local ratio = math.clamp((Config.FlySpeed - 50) / 300, 0, 1)
+        SFill.Size = UDim2.new(ratio, 0, 1, 0)
+        SKnob.Position = UDim2.new(ratio, -8, 0.5, -8)
+        SpeedLabel.Text = "🚀 TURBO SPEED: " .. Config.FlySpeed .. " studs/s"
+    end
+
+    local isDraggingSpeed = false
+    SKnob.MouseButton1Down:Connect(function() isDraggingSpeed = true end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            isDraggingSpeed = false
+        end
+    end)
+    RunService.RenderStepped:Connect(function()
+        if isDraggingSpeed then
+            local mouse = LocalPlayer:GetMouse()
+            local ratio = math.clamp((mouse.X - STrack.AbsolutePosition.X) / STrack.AbsoluteSize.X, 0, 1)
+            Config.FlySpeed = math.floor(50 + ratio * 300)
+            UpdateSpeedUI()
+        end
+    end)
+
+    local BtnMinusSpeed = Instance.new("TextButton", SpeedSection)
+    BtnMinusSpeed.Size = UDim2.new(0, 22, 0, 22)
+    BtnMinusSpeed.Position = UDim2.new(0, 6, 0, 25)
+    BtnMinusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    BtnMinusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BtnMinusSpeed.Font = Enum.Font.GothamBold
+    BtnMinusSpeed.TextSize = 13
+    BtnMinusSpeed.Text = "−"
+    Instance.new("UICorner", BtnMinusSpeed).CornerRadius = UDim.new(0, 4)
+    BtnMinusSpeed.MouseButton1Click:Connect(function()
+        Config.FlySpeed = math.max(50, Config.FlySpeed - 15)
+        UpdateSpeedUI()
+    end)
+
+    local BtnPlusSpeed = Instance.new("TextButton", SpeedSection)
+    BtnPlusSpeed.Size = UDim2.new(0, 22, 0, 22)
+    BtnPlusSpeed.Position = UDim2.new(1, -28, 0, 25)
+    BtnPlusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    BtnPlusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BtnPlusSpeed.Font = Enum.Font.GothamBold
+    BtnPlusSpeed.TextSize = 13
+    BtnPlusSpeed.Text = "+"
+    Instance.new("UICorner", BtnPlusSpeed).CornerRadius = UDim.new(0, 4)
+    BtnPlusSpeed.MouseButton1Click:Connect(function()
+        Config.FlySpeed = math.min(350, Config.FlySpeed + 15)
+        UpdateSpeedUI()
+    end)
+
+    -- Overhead Height Box
+    local HeightSection = Instance.new("Frame", LockPage)
+    HeightSection.Size = UDim2.new(1, 0, 0, 36)
+    HeightSection.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
+    Instance.new("UICorner", HeightSection).CornerRadius = UDim.new(0, 6)
+
+    local HeightLabel = Instance.new("TextLabel", HeightSection)
+    HeightLabel.Size = UDim2.new(0.68, 0, 1, 0)
+    HeightLabel.Position = UDim2.new(0, 10, 0, 0)
+    HeightLabel.BackgroundTransparency = 1
+    HeightLabel.TextColor3 = Color3.fromRGB(150, 230, 255)
+    HeightLabel.Font = Enum.Font.GothamBold
+    HeightLabel.TextSize = 10.5
+    HeightLabel.TextXAlignment = Enum.TextXAlignment.Left
+    HeightLabel.Text = "🛡️ OVERHEAD SAFE DIST: " .. Config.OverheadDistance .. " studs"
+
+    local HMinus = Instance.new("TextButton", HeightSection)
+    HMinus.Size = UDim2.new(0, 24, 0, 24)
+    HMinus.Position = UDim2.new(1, -54, 0.5, -12)
+    HMinus.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    HMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
+    HMinus.Font = Enum.Font.GothamBold
+    HMinus.TextSize = 13
+    HMinus.Text = "−"
+    Instance.new("UICorner", HMinus).CornerRadius = UDim.new(0, 4)
+    HMinus.MouseButton1Click:Connect(function()
+        Config.OverheadDistance = math.max(6, Config.OverheadDistance - 1)
+        HeightLabel.Text = "🛡️ OVERHEAD SAFE DIST: " .. Config.OverheadDistance .. " studs"
+    end)
+
+    local HPlus = Instance.new("TextButton", HeightSection)
+    HPlus.Size = UDim2.new(0, 24, 0, 24)
+    HPlus.Position = UDim2.new(1, -26, 0.5, -12)
+    HPlus.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    HPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
+    HPlus.Font = Enum.Font.GothamBold
+    HPlus.TextSize = 13
+    HPlus.Text = "+"
+    Instance.new("UICorner", HPlus).CornerRadius = UDim.new(0, 4)
+    HPlus.MouseButton1Click:Connect(function()
+        Config.OverheadDistance = math.min(30, Config.OverheadDistance + 1)
+        HeightLabel.Text = "🛡️ OVERHEAD SAFE DIST: " .. Config.OverheadDistance .. " studs"
+    end)
+
     -- Spy Cam Toggle Button
     local SpectateToggleBtn = Instance.new("TextButton", LockPage)
-    SpectateToggleBtn.Size = UDim2.new(1, 0, 0, 34)
+    SpectateToggleBtn.Size = UDim2.new(1, 0, 0, 32)
     SpectateToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 30, 45)
     SpectateToggleBtn.TextColor3 = Color3.fromRGB(140, 210, 255)
     SpectateToggleBtn.Font = Enum.Font.GothamBold
-    SpectateToggleBtn.TextSize = 11
+    SpectateToggleBtn.TextSize = 10.5
     SpectateToggleBtn.Text = "👁️ SPECTATE SPY CAM: OFF"
     Instance.new("UICorner", SpectateToggleBtn).CornerRadius = UDim.new(0, 6)
     SpectateToggleBtn.MouseButton1Click:Connect(function()
@@ -886,7 +1013,7 @@ local function BuildUI()
     end)
 
     local TargetStatusCard = Instance.new("TextLabel", LockPage)
-    TargetStatusCard.Size = UDim2.new(1, 0, 0, 64)
+    TargetStatusCard.Size = UDim2.new(1, 0, 0, 60)
     TargetStatusCard.BackgroundColor3 = Color3.fromRGB(14, 18, 24)
     TargetStatusCard.TextColor3 = Color3.fromRGB(200, 240, 225)
     TargetStatusCard.Font = Enum.Font.Gotham
@@ -896,11 +1023,11 @@ local function BuildUI()
     Instance.new("UICorner", TargetStatusCard).CornerRadius = UDim.new(0, 6)
 
     local ClearTargetBtn = Instance.new("TextButton", LockPage)
-    ClearTargetBtn.Size = UDim2.new(1, 0, 0, 28)
+    ClearTargetBtn.Size = UDim2.new(1, 0, 0, 26)
     ClearTargetBtn.BackgroundColor3 = Color3.fromRGB(45, 25, 30)
     ClearTargetBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
     ClearTargetBtn.Font = Enum.Font.GothamBold
-    ClearTargetBtn.TextSize = 10.5
+    ClearTargetBtn.TextSize = 10
     ClearTargetBtn.Text = "✕ CANCEL / RESET TARGET (SET NIL)"
     Instance.new("UICorner", ClearTargetBtn).CornerRadius = UDim.new(0, 5)
     ClearTargetBtn.MouseButton1Click:Connect(function()
@@ -911,7 +1038,7 @@ local function BuildUI()
     end)
 
     local PList = Instance.new("Frame", LockPage)
-    PList.Size = UDim2.new(1, 0, 0, 180)
+    PList.Size = UDim2.new(1, 0, 0, 170)
     PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
     Instance.new("UICorner", PList).CornerRadius = UDim.new(0, 6)
 
@@ -995,7 +1122,7 @@ local function BuildUI()
     AddToggle(ConfigPage, "Fast Attack Exploit", Config.FastAttack, function(v) Config.FastAttack = v end)
     AddToggle(ConfigPage, "Auto Skill Spam (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
 
-    LockPage.CanvasSize = UDim2.new(0, 0, 0, 390)
+    LockPage.CanvasSize = UDim2.new(0, 0, 0, 480)
     ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 380)
 
     -- Realtime UI Refresh Loop
@@ -1016,7 +1143,7 @@ local function BuildUI()
                 MiniLabel.Text = "🎯 Select Target from List"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "NONTK v93 | IDLE"
+                MiniLabel.Text = "NONTK v94 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
@@ -1030,15 +1157,15 @@ local function BuildUI()
             end
 
             if not Config.Enabled then
-                TargetStatusCard.Text = "⏸ SYSTEM PAUSED\nEnable 'COMBAT SYSTEM' and click a player name to attack/spy."
+                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nSpeed: %d studs/s | SafeHeight: %d studs\nEnable 'COMBAT SYSTEM' to lock & attack.", Config.FlySpeed, Config.OverheadDistance)
             elseif cur and cur.Character and cur.Character:FindFirstChild("Humanoid") then
                 local st = GetPlayerCombatState(cur)
                 local stateMsg = CombatTracker.HasDealtDamage and "🔴 OVERHEAD EXECUTION" or "⚡ TURBO CLOSING IN"
                 local spyMsg = Config.Spectate and " | 👁️ SPY CAM: ON" or ""
-                TargetStatusCard.Text = string.format("⚔ LOCKED: %s (Lv.%d)%s\n%s | HP: %d/%d | Dist: %d studs\nWill reset to empty (nil) once eliminated.",
-                    cur.Name, st.Details.Level, spyMsg, stateMsg, st.Details.Health, st.Details.MaxHealth, st.Details.Distance)
+                TargetStatusCard.Text = string.format("⚔ LOCKED: %s (Lv.%d)%s\n%s | HP: %d/%d | Dist: %d studs\nTurbo Speed: %d studs/s | SafeHeight: %d studs",
+                    cur.Name, st.Details.Level, spyMsg, stateMsg, st.Details.Health, st.Details.MaxHealth, st.Details.Distance, Config.FlySpeed, Config.OverheadDistance)
             else
-                TargetStatusCard.Text = "🎯 STANDING BY (TARGET: NIL)\nSelect a player from the list to lock & spy/attack."
+                TargetStatusCard.Text = string.format("🎯 STANDING BY (TARGET: NIL)\nSpeed: %d studs/s | SafeHeight: %d studs\nSelect a player from the list to attack/spy.", Config.FlySpeed, Config.OverheadDistance)
             end
         end
     end)
