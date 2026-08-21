@@ -1,6 +1,6 @@
--- [[ NONTK Bounty Hunter v84 HYPER-MELEE + RACE AWAKENING ]]
--- Instant Melee Spawner, Auto Race V3/V4 Awakening, Hyper-Fast Melee Attack & Zero-Delay AimLock
--- Speed Slider, Collapsible UI, Auto Hunt Loop, Anti-Rollback 160 studs/s
+-- [[ NONTK Bounty Hunter v82 ULTRA ]] --
+-- Silent Aim | Hitbox Expand | Teleport Lock | Anti-Die | ESP | Multi-Kill | Speed 300+
+-- Auto Rejoin Loop | Ghost Mode | Position Spoof | Infinite Buso | Infinite Combo
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -9,6 +9,8 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -17,373 +19,243 @@ local Character = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
 local RootPart = Character:WaitForChild("HumanoidRootPart")
 local Humanoid = Character:WaitForChild("Humanoid")
 
--- ============================================================
--- CONFIG
--- ============================================================
+-- ================================================
+-- CONFIG — FULL GODMODE
+-- ================================================
 local Config = {
-    Enabled          = false,
-    TargetMode       = "Auto",
-    SelectedPlayer   = nil,
-    MinBountyLevel   = 20,
-    OverheadDistance = 4,    -- Tight 4-stud distance for 100% Melee fist hit registration
-    FlySpeed         = 160,  -- default safe speed
+    -- Core
+    Enabled = false,
+    TargetMode = "Auto",
+    SelectedPlayer = nil,
+    MinBountyLevel = 1,         -- grab anyone
 
-    -- Melee & Fast Attack Engine
-    FocusMelee       = true, -- 100% Melee priority (Godhuman, E-Claw, Talon, etc.)
-    FastAttack       = true,
-    FastAttackMulti  = 3,    -- Multi-register packet burst per attack tick
-    AttackDelay      = 0.01, -- Ultra-rapid attack tick rate (100 ticks/s)
+    -- Movement
+    FlySpeed = 300,             -- default 300, max 9999
+    SpeedMin = 50,
+    SpeedMax = 9999,
+    OverheadDistance = 5,       -- tighter lock
+    NoclipEnabled = true,
 
-    -- Auto Race V3 & V4 Awakening
-    AutoRace         = true, -- Auto activate Race V3 & V4 in combat
-    AutoRaceV3       = true, -- Key T / Ability remote
-    AutoRaceV4       = true, -- Key Y / Awakening remote
-    RaceTriggerDist  = 40,   -- Distance to trigger race abilities
+    -- Combat
+    FastAttack = true,
+    HitboxExpand = true,
+    HitboxSize = 20,            -- studs, massive hitbox
+    SilentAim = true,
+    AutoCombo = true,
+    SkillSpam = true,
+    Skills = {"Z", "X", "C", "V", "Q", "E", "R", "T"},
+    SkillDelay = 0.01,          -- near-instant spam
+    InfiniteCombo = true,       -- reset combo lock every frame
+    AutoExecute = true,         -- teleport behind & kill
 
-    -- Auto Buffs & PvP
-    AutoHaki         = true,
-    AutoPvP          = true,
+    -- Defense / Survivability
+    AntiDie = true,             -- infinite health restore
+    AntiDieHP = 0.01,           -- trigger at 1% HP
+    GhostMode = false,          -- invisible to server hitboxes
+    AutoRespawn = true,
+    AutoRejoin = false,
 
-    -- Continuous Skill Fusion
-    SkillSpam        = true,
-    Skills           = {"Z", "X", "C", "V"},
-    SkillInterval    = 0.08, -- Non-blocking rapid skill sequence interval
+    -- Targeting
+    AutoHunt = true,
+    HuntInterval = 0.05,
+    BlacklistTime = 30,
+    DamageTestTime = 0.3,
+    WeaponSwitchDelay = 0.2,
+    Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
 
-    -- Target & Safety
-    DamageTestTime   = 0.8,
-    BlacklistTime    = 90,
-    AutoHunt         = true,
-    HuntInterval     = 0.1,
-    PredictFrames    = 6,    -- Velocity compensation frames
-
-    -- Zero-Delay AimLock
-    AimLock          = true,
-    AimLockTarget    = "HRP", -- "HRP" = Body center | "HEAD" = Head
-    AimLockSmooth    = 0.05,  -- 0.05 = Snappy, near-instant lock
-    AimLockBodySnap  = true,  -- Force character HRP to face target frame-perfectly
-    AimLockFOV       = 2000,  -- Max lock distance
+    -- Meta
+    AutoHaki = true,
+    AutoPvP = true,
+    PositionSpoof = false,
+    ESPEnabled = true,
+    ESPColor = Color3.fromRGB(255, 50, 50),
 }
 
--- ============================================================
+-- ================================================
 -- STATE
--- ============================================================
-local CurrentTarget        = nil
-local FlightBodyVelocity   = nil
-local FlightBodyGyro       = nil
-local CombatFramework      = nil
-local ActiveController     = nil
-local BlacklistedTargets   = {}
-
--- AimLock State
-local AimLock_Locked       = false
-local AimLock_LockPoint    = nil
-local AimLock_Connection   = nil
-local AimLock_PrevAutoRot  = true
-
--- Skill State
-local CurrentSkillIndex    = 1
-local LastSkillTime        = 0
-local LastRaceTrigger      = 0
-
+-- ================================================
+local CurrentTarget = nil
+local FlightBodyVelocity = nil
+local FlightBodyGyro = nil
+local CombatFramework = nil
+local ActiveController = nil
+local LastWeaponSwitch = 0
+local CurrentWeaponIndex = 1
+local BlacklistedTargets = {}
+local ESPObjects = {}
 local CombatTracker = {
-    Player         = nil,
-    EngagedTime    = 0,
-    InitialHP      = 0,
-    HasDealtDamage = false,
+    Player = nil, EngagedTime = 0,
+    InitialHP = 0, HasDealtDamage = false
 }
 
--- ============================================================
--- REMOTES
--- ============================================================
-local Remotes        = ReplicatedStorage:WaitForChild("Remotes", 5)
-local CommF          = Remotes and Remotes:WaitForChild("CommF_", 5)
-local CommE          = Remotes and Remotes:WaitForChild("CommE", 5)
-local NetModule      = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+local CommF = Remotes and Remotes:WaitForChild("CommF_", 5)
+local NetModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
 local RegisterAttack = NetModule and (NetModule:FindFirstChild("RegisterAttack") or NetModule:FindFirstChild("RE/RegisterAttack"))
-local RegisterHit    = NetModule and (NetModule:FindFirstChild("RegisterHit")   or NetModule:FindFirstChild("RE/RegisterHit"))
+local RegisterHit = NetModule and (NetModule:FindFirstChild("RegisterHit") or NetModule:FindFirstChild("RE/RegisterHit"))
 
--- ============================================================
--- MELEE STYLES TIER LIST (For Instant Spawning)
--- ============================================================
-local MeleeSpawnTiers = {
-    "BuyGodhuman",
-    "BuyElectricClaw",
-    "BuyDragonTalon",
-    "BuyDeathStep",
-    "BuySharkmanKarate",
-    "BuySuperhuman",
-    "BuyDragonClaw",
-    "BuyFishmanKarate",
-    "BuyElectro",
-    "BuyBlackLeg",
-    "BuyCombat"
-}
-
--- ============================================================
--- UTILITIES
--- ============================================================
-local function GetPlayerLevel(player)
-    if not player then return 0 end
-    local data = player:FindFirstChild("Data")
-    if data and data:FindFirstChild("Level") then return tonumber(data.Level.Value) or 0 end
-    local ls = player:FindFirstChild("leaderstats")
+-- ================================================
+-- HELPERS
+-- ================================================
+local function GetPlayerLevel(p)
+    if not p then return 0 end
+    local d = p:FindFirstChild("Data")
+    if d and d:FindFirstChild("Level") then return tonumber(d.Level.Value) or 0 end
+    local ls = p:FindFirstChild("leaderstats")
     if ls and ls:FindFirstChild("Level") then return tonumber(ls.Level.Value) or 0 end
-    local attr = player:GetAttribute("Level")
-    if attr then return tonumber(attr) or 0 end
-    return 0
+    return tonumber(p:GetAttribute("Level")) or 0
 end
 
-local function GetPlayerHealth(player)
-    if player and player.Character and player.Character:FindFirstChild("Humanoid") then
-        local h = player.Character.Humanoid
+local function GetPlayerHealth(p)
+    if p and p.Character and p.Character:FindFirstChild("Humanoid") then
+        local h = p.Character.Humanoid
         return math.floor(h.Health), math.floor(h.MaxHealth)
     end
     return 0, 0
 end
 
-local function GetDistanceToPlayer(player)
-    if RootPart and player and player.Character and player.Character:FindFirstChild("HumanoidRootPart") then
-        return math.floor((RootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude)
+local function GetDist(p)
+    if RootPart and p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+        return math.floor((RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude)
     end
     return 999999
 end
 
-local function IsPvPActive(player)
-    if not player or not player.Character then return false end
-    local c = player.Character
-    if c:FindFirstChild("PvPDisabled") or player:FindFirstChild("PvPDisabled") then return false end
+local function IsPvPActive(p)
+    if not p or not p.Character then return false end
+    local c = p.Character
+    if c:FindFirstChild("PvPDisabled") or p:FindFirstChild("PvPDisabled") then return false end
     if c:FindFirstChildOfClass("ForceField") then return false end
-    if c:GetAttribute("PvPDisabled") == true or player:GetAttribute("PvPDisabled") == true then return false end
+    if c:GetAttribute("PvPDisabled") == true or p:GetAttribute("PvPDisabled") == true then return false end
     return true
 end
 
--- ============================================================
--- MELEE DETECT & AUTO-EQUIP ENGINE
--- ============================================================
-local function IsMeleeTool(tool)
-    if not tool or not tool:IsA("Tool") then return false end
-    local tType = tool:GetAttribute("WeaponType") or tool.ToolTip
-    if tType == "Melee" or tool:FindFirstChild("CombatScript") then return true end
-    local name = tool.Name:lower()
-    if name:find("combat") or name:find("melee") or name:find("godhuman")
-        or name:find("claw") or name:find("karate") or name:find("step")
-        or name:find("talon") or name:find("superhuman") or name:find("fist") then
-        return true
-    end
-    return false
-end
-
-local function EnsureMeleeEquipped()
-    if not Character or not Humanoid then return false end
-
-    -- Check if currently holding a melee
-    local equippedTool = Character:FindFirstChildOfClass("Tool")
-    if equippedTool and IsMeleeTool(equippedTool) then
-        return true
-    end
-
-    -- Look in Backpack
-    local backpack = LocalPlayer:FindFirstChild("Backpack")
-    if backpack then
-        for _, tool in ipairs(backpack:GetChildren()) do
-            if IsMeleeTool(tool) then
-                Humanoid:EquipTool(tool)
-                return true
-            end
-        end
-    end
-    return false
-end
-
--- ============================================================
--- INSTANT WEAPON & MELEE SPAWNER
--- ============================================================
-local function SpawnAndEquipBestMelee()
-    pcall(function()
-        if not CommF then return end
-        for _, remoteName in ipairs(MeleeSpawnTiers) do
-            CommF:InvokeServer(remoteName)
-            task.wait(0.04)
-            if EnsureMeleeEquipped() then break end
-        end
-    end)
-    EnsureMeleeEquipped()
-end
-
--- ============================================================
--- AUTO RACE V3 & V4 AWAKENING ENGINE
--- ============================================================
-local function ProcessRaceAwakening(targetHRP)
-    if not Config.AutoRace or not Character then return end
-    local now = tick()
-    if now - LastRaceTrigger < 0.25 then return end
-
-    local dist = targetHRP and (RootPart.Position - targetHRP.Position).Magnitude or 999
-    if dist <= Config.RaceTriggerDist then
-        -- 1. Trigger Race V3 Ability (Key T)
-        if Config.AutoRaceV3 then
-            task.spawn(function()
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.T, false, game)
-                task.wait(0.01)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.T, false, game)
-                if CommE then pcall(function() CommE:FireServer("ActivateAbility") end) end
-            end)
-        end
-
-        -- 2. Trigger Race V4 Awakening (Key Y)
-        if Config.AutoRaceV4 then
-            task.spawn(function()
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
-                task.wait(0.01)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Y, false, game)
-                if CommE then pcall(function() CommE:FireServer("ActivateAwakening") end) end
-            end)
-        end
-
-        LastRaceTrigger = now
-    end
-end
-
--- ============================================================
--- AIMLOCK ENGINE (Continuous & Lead Compensated)
--- ============================================================
-local function GetLockPoint(target)
-    if not target or not target.Character then return nil end
-    local char = target.Character
-    local part = (Config.AimLockTarget == "HEAD" and char:FindFirstChild("Head")) or char:FindFirstChild("HumanoidRootPart")
-    if not part then return nil end
-
-    -- Velocity lead compensation (40ms lead)
-    local vel = (part:IsA("BasePart") and part.AssemblyLinearVelocity) or Vector3.new(0, 0, 0)
-    return part.Position + (vel * 0.04)
-end
-
-local function EnableAimLock()
-    if AimLock_Connection then AimLock_Connection:Disconnect() end
-    AimLock_Locked = true
-
-    if Humanoid then
-        AimLock_PrevAutoRot = Humanoid.AutoRotate
-        Humanoid.AutoRotate = false
-    end
-
-    AimLock_Connection = RunService.RenderStepped:Connect(function()
-        if not Config.AimLock or not Config.Enabled then return end
-        if not CurrentTarget or not CurrentTarget.Character then return end
-
-        local lockPos = GetLockPoint(CurrentTarget)
-        if not lockPos then return end
-
-        if RootPart then
-            local dist = (RootPart.Position - lockPos).Magnitude
-            if dist > Config.AimLockFOV then return end
-        end
-
-        AimLock_LockPoint = lockPos
-
-        -- 1. Camera Lock
-        local camPos   = Camera.CFrame.Position
-        local targetCF = CFrame.new(camPos, lockPos)
-        local alpha    = math.clamp(1 - Config.AimLockSmooth, 0.05, 1)
-        Camera.CFrame  = Camera.CFrame:Lerp(targetCF, alpha)
-
-        -- 2. Frame-Perfect Character Body Snap
-        if Config.AimLockBodySnap and RootPart then
-            local myPos      = RootPart.Position
-            local flatTarget = Vector3.new(lockPos.X, myPos.Y, lockPos.Z)
-            if (flatTarget - myPos).Magnitude > 0.3 then
-                local faceDir = (flatTarget - myPos).Unit
-                RootPart.CFrame = CFrame.new(myPos, myPos + faceDir)
-            end
-        end
-
-        -- 3. Flight Gyro Lock
-        if FlightBodyGyro and RootPart then
-            FlightBodyGyro.CFrame = CFrame.new(RootPart.Position, lockPos)
-        end
-    end)
-end
-
-local function DisableAimLock()
-    AimLock_Locked = false
-    AimLock_LockPoint = nil
-    if AimLock_Connection then
-        AimLock_Connection:Disconnect()
-        AimLock_Connection = nil
-    end
-    if Humanoid then
-        Humanoid.AutoRotate = AimLock_PrevAutoRot
-    end
-end
-
--- ============================================================
+-- ================================================
 -- FLIGHT PHYSICS
--- ============================================================
+-- ================================================
 local function SetupFlightPhysics()
     if not RootPart then return end
     if not FlightBodyVelocity or FlightBodyVelocity.Parent ~= RootPart then
         if FlightBodyVelocity then FlightBodyVelocity:Destroy() end
         FlightBodyVelocity = Instance.new("BodyVelocity")
-        FlightBodyVelocity.Name         = "NONTKGlide"
-        FlightBodyVelocity.Velocity     = Vector3.new(0, 0, 0)
-        FlightBodyVelocity.MaxForce     = Vector3.new(4e4, 4e4, 4e4)
-        FlightBodyVelocity.P            = 1500
-        FlightBodyVelocity.Parent       = RootPart
+        FlightBodyVelocity.Name = "NONTKGlide"
+        FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        FlightBodyVelocity.MaxForce = Vector3.new(9e9, 9e9, 9e9)  -- max force
+        FlightBodyVelocity.P = 99999
+        FlightBodyVelocity.Parent = RootPart
     end
     if not FlightBodyGyro or FlightBodyGyro.Parent ~= RootPart then
         if FlightBodyGyro then FlightBodyGyro:Destroy() end
         FlightBodyGyro = Instance.new("BodyGyro")
-        FlightBodyGyro.Name      = "NONTKGyro"
-        FlightBodyGyro.MaxTorque = Vector3.new(4e4, 4e4, 4e4)
-        FlightBodyGyro.P         = 1500
-        FlightBodyGyro.D         = 80
-        FlightBodyGyro.CFrame    = RootPart.CFrame
-        FlightBodyGyro.Parent    = RootPart
+        FlightBodyGyro.Name = "NONTKGyro"
+        FlightBodyGyro.MaxTorque = Vector3.new(9e9, 9e9, 9e9)
+        FlightBodyGyro.P = 99999
+        FlightBodyGyro.D = 200
+        FlightBodyGyro.CFrame = RootPart.CFrame
+        FlightBodyGyro.Parent = RootPart
     end
+    if Humanoid then Humanoid.PlatformStand = true end
 end
 
 local function ClearFlightPhysics()
     if FlightBodyVelocity then FlightBodyVelocity:Destroy(); FlightBodyVelocity = nil end
-    if FlightBodyGyro     then FlightBodyGyro:Destroy();     FlightBodyGyro = nil     end
-    if Humanoid           then Humanoid.PlatformStand = false end
+    if FlightBodyGyro then FlightBodyGyro:Destroy(); FlightBodyGyro = nil end
+    if Humanoid then Humanoid.PlatformStand = false end
 end
 
--- Collision bypass
+-- ================================================
+-- HITBOX EXPANDER
+-- ================================================
+local function ExpandHitbox(target)
+    if not Config.HitboxExpand or not target or not target.Character then return end
+    pcall(function()
+        local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then hrp.Size = Vector3.new(Config.HitboxSize, Config.HitboxSize, Config.HitboxSize) end
+    end)
+end
+
+local function RestoreHitbox(target)
+    pcall(function()
+        if target and target.Character then
+            local hrp = target.Character:FindFirstChild("HumanoidRootPart")
+            if hrp then hrp.Size = Vector3.new(2, 2, 1) end
+        end
+    end)
+end
+
+-- ================================================
+-- SILENT AIM — camera lock to target hitbox
+-- ================================================
+local function ApplySilentAim(targetHRP)
+    if not Config.SilentAim or not targetHRP then return end
+    pcall(function()
+        Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position)
+    end)
+end
+
+-- ================================================
+-- ANTI-DIE — restore health every frame
+-- ================================================
+RunService.Heartbeat:Connect(function()
+    if not Config.AntiDie then return end
+    if not Humanoid or not Humanoid.Parent then return end
+    pcall(function()
+        if Humanoid.Health < Humanoid.MaxHealth * Config.AntiDieHP then
+            Humanoid.Health = Humanoid.MaxHealth
+        end
+    end)
+end)
+
+-- ================================================
+-- NOCLIP — no collision every frame
+-- ================================================
 RunService.Stepped:Connect(function()
-    if Config.Enabled and Character and RootPart then
+    if not Config.NoclipEnabled and not Config.Enabled then return end
+    if Character and RootPart then
         for _, part in ipairs(Character:GetDescendants()) do
             if part:IsA("BasePart") then part.CanCollide = false end
         end
     end
 end)
 
--- Character respawn hooks
+-- ================================================
+-- AUTO-RESPAWN
+-- ================================================
 LocalPlayer.CharacterAdded:Connect(function(char)
     Character = char
-    RootPart  = char:WaitForChild("HumanoidRootPart")
-    Humanoid  = char:WaitForChild("Humanoid")
-    task.wait(0.3)
+    RootPart = char:WaitForChild("HumanoidRootPart")
+    Humanoid = char:WaitForChild("Humanoid")
+    task.wait(0.5)
     SetupFlightPhysics()
     SetupCombatHooks()
-    if Config.FocusMelee then
-        if not EnsureMeleeEquipped() then SpawnAndEquipBestMelee() end
+    if Config.AntiDie then
+        -- hook health changed
+        Humanoid.HealthChanged:Connect(function(h)
+            if h <= 0 and Config.AutoRespawn then
+                task.wait(0.1)
+                LocalPlayer:LoadCharacter()
+            end
+        end)
     end
 end)
 
+-- ================================================
+-- COMBAT HOOKS
+-- ================================================
 function SetupCombatHooks()
     pcall(function()
         local ps = LocalPlayer:FindFirstChild("PlayerScripts")
         if ps and ps:FindFirstChild("CombatFramework") then
-            CombatFramework  = require(ps.CombatFramework)
+            CombatFramework = require(ps.CombatFramework)
             ActiveController = CombatFramework.activeController
         end
     end)
 end
 SetupCombatHooks()
 
--- ============================================================
--- AUTO BUFFS
--- ============================================================
+-- ================================================
+-- PVP + HAKI AUTO ENABLE
+-- ================================================
 local function EnsurePvPAndHaki()
     if not Character then return end
     pcall(function()
@@ -392,13 +264,26 @@ local function EnsurePvPAndHaki()
         end
         if Config.AutoHaki and CommF then
             if not Character:FindFirstChild("HasBuso") then CommF:InvokeServer("Buso") end
+            -- infinite haki — keep calling every 2s externally
         end
     end)
 end
 
--- ============================================================
+-- Keep haki on a fast loop so it never drops
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if Config.Enabled and Config.AutoHaki then
+            pcall(function()
+                if CommF then CommF:InvokeServer("Buso") end
+            end)
+        end
+    end
+end)
+
+-- ================================================
 -- TARGET ACQUISITION
--- ============================================================
+-- ================================================
 local function AcquireBestTarget()
     local best, shortest = nil, math.huge
     local myLevel = GetPlayerLevel(LocalPlayer)
@@ -407,121 +292,229 @@ local function AcquireBestTarget()
             and p.Character
             and p.Character:FindFirstChild("HumanoidRootPart")
             and p.Character:FindFirstChild("Humanoid") then
-
-            local hum    = p.Character.Humanoid
+            local hum = p.Character.Humanoid
             local pLevel = GetPlayerLevel(p)
             local isBlacklisted = false
-
             if BlacklistedTargets[p] then
-                if tick() < BlacklistedTargets[p] then
-                    isBlacklisted = true
-                else
-                    BlacklistedTargets[p] = nil
-                end
+                if tick() < BlacklistedTargets[p] then isBlacklisted = true
+                else BlacklistedTargets[p] = nil end
             end
-
-            if not isBlacklisted and hum.Health > 0 and IsPvPActive(p) and pLevel >= Config.MinBountyLevel then
-                local eligible = true
-                if myLevel > 100 and pLevel < (myLevel - 350) and pLevel < 2000 then
-                    eligible = false
-                end
-                if eligible then
-                    local dist = (RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
-                    if dist < shortest then shortest = dist; best = p end
-                end
+            if not isBlacklisted and hum.Health > 0 and pLevel >= Config.MinBountyLevel then
+                local dist = (RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
+                if dist < shortest then shortest = dist; best = p end
             end
         end
     end
     return best
 end
 
--- ============================================================
--- HYPER-FAST MELEE ATTACK (Multi-Packet Burst)
--- ============================================================
-local function ExecuteHyperFastAttack(targetHRP)
+-- ================================================
+-- WEAPON SWITCH
+-- ================================================
+local function SwitchWeapon()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack or not Character or not Humanoid then return end
+    local category = Config.Weapons[CurrentWeaponIndex]
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local tType = tool:GetAttribute("WeaponType") or tool.ToolTip or ""
+            if tType == category or tool.Name:lower():find(category:lower())
+                or (category == "Melee" and tool:FindFirstChild("CombatScript")) then
+                pcall(function() Humanoid:EquipTool(tool) end)
+                break
+            end
+        end
+    end
+    CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
+end
+
+-- ================================================
+-- FAST ATTACK — multi-vector attack fire
+-- ================================================
+local function ExecuteFastAttack(targetHRP)
     if not Config.FastAttack or not targetHRP then return end
 
-    -- 1. Client Framework Bypass
+    -- Method 1: ActiveController manipulation
     pcall(function()
         if not ActiveController then SetupCombatHooks() end
         if ActiveController then
-            ActiveController.timeToNextAttack  = 0
-            ActiveController.attacking         = false
-            ActiveController.blocking          = false
-            ActiveController.hitboxMagnitude   = 150
-            ActiveController.increment         = 4
-            if ActiveController.attack   then ActiveController:attack() end
+            ActiveController.timeToNextAttack = 0
+            ActiveController.attacking = false
+            ActiveController.blocking = false
+            ActiveController.hitboxMagnitude = Config.HitboxExpand and (Config.HitboxSize * 10) or 100
+            ActiveController.increment = 10
+            if Config.InfiniteCombo then
+                ActiveController.maxCombo = 9999
+                ActiveController.combo = 0
+            end
+            if ActiveController.attack then ActiveController:attack() end
             if ActiveController.bladeHit then ActiveController.bladeHit(targetHRP, {targetHRP}) end
         end
     end)
 
-    -- 2. Server Attack Multi-Packets
+    -- Method 2: Remote fire
     pcall(function()
-        for _ = 1, Config.FastAttackMulti do
-            if RegisterAttack then RegisterAttack:FireServer(0) end
-            if RegisterHit    then RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}}) end
+        if RegisterAttack then RegisterAttack:FireServer(0) end
+        if RegisterHit then
+            RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}})
         end
     end)
 
-    -- 3. Tool Click Activation
-    local tool = Character:FindFirstChildOfClass("Tool")
-    if tool then tool:Activate() end
+    -- Method 3: Tool activation
+    pcall(function()
+        local tool = Character:FindFirstChildOfClass("Tool")
+        if tool then tool:Activate() end
+    end)
+
+    -- Method 4: VirtualUser click
     VirtualUser:CaptureController()
     VirtualUser:Button1Down(Vector2.new(0, 0))
     VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
--- ============================================================
--- CONTINUOUS SKILL FUSION (Non-Blocking)
--- ============================================================
-local function ProcessContinuousSkills(targetHRP, targetHum)
-    if not Config.SkillSpam or not targetHRP or not targetHum or targetHum.Health <= 0 then return end
-    local now = tick()
-    if (now - LastSkillTime) < Config.SkillInterval then return end
-
-    local key = Config.Skills[CurrentSkillIndex]
-    if key then
-        task.spawn(function()
-            pcall(function() Camera.CFrame = CFrame.new(Camera.CFrame.Position, targetHRP.Position) end)
-            VirtualInputManager:SendKeyEvent(true,  Enum.KeyCode[key], false, game)
-            task.wait(0.015)
+-- ================================================
+-- SKILL SPAM — all skills near-instant
+-- ================================================
+local function CastSkills(targetHRP, targetHum)
+    if not Config.SkillSpam or not targetHRP then return end
+    if targetHum.Health <= 0 then return end
+    ApplySilentAim(targetHRP)
+    for _, key in ipairs(Config.Skills) do
+        if not CurrentTarget or targetHum.Health <= 0 then break end
+        pcall(function()
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+            task.wait(Config.SkillDelay)
             VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+            task.wait(Config.SkillDelay)
         end)
     end
-
-    CurrentSkillIndex = (CurrentSkillIndex % #Config.Skills) + 1
-    LastSkillTime = now
 end
 
--- ============================================================
--- STICKY MELEE POSITIONING (Glides directly on top of target)
--- ============================================================
-local function GlideToMeleeRange(targetHRP)
+-- ================================================
+-- AUTO EXECUTE — teleport to back of target & burst
+-- ================================================
+local function AutoExecute(targetHRP, targetHum)
+    if not Config.AutoExecute or not targetHRP then return end
+    if targetHum.Health <= 0 then return end
+    -- Teleport directly behind target
+    pcall(function()
+        local behindCF = targetHRP.CFrame * CFrame.new(0, 2, -3)
+        RootPart.CFrame = behindCF
+    end)
+end
+
+-- ================================================
+-- GLIDE TO TARGET — with teleport assist
+-- ================================================
+local function GlideToTarget(targetHRP)
     SetupFlightPhysics()
     if not FlightBodyVelocity or not FlightBodyGyro then return end
+    local targetPos = targetHRP.Position + Vector3.new(0, Config.OverheadDistance, 0)
+    local curPos = RootPart.Position
+    local delta = targetPos - curPos
+    local dist = delta.Magnitude
 
-    local targetVel = targetHRP.AssemblyLinearVelocity
-    local leadPos   = targetHRP.Position + (targetVel * (Config.PredictFrames / 60))
-    local stickPos  = leadPos + Vector3.new(0, Config.OverheadDistance, 0)
+    FlightBodyGyro.CFrame = CFrame.new(curPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
 
-    local myPos     = RootPart.Position
-    local delta     = stickPos - myPos
-    local dist      = delta.Magnitude
-
-    FlightBodyGyro.CFrame = CFrame.new(myPos, leadPos)
-
-    if dist > 8 then
-        local speed = math.min(Config.FlySpeed, 175)
-        FlightBodyVelocity.Velocity = delta.Unit * speed
+    if dist > 250 then
+        -- Hard teleport for extreme distances instead of flying
+        pcall(function() RootPart.CFrame = CFrame.new(targetPos) end)
+    elseif dist > 8 then
+        FlightBodyVelocity.Velocity = delta.Unit * Config.FlySpeed
     else
-        FlightBodyVelocity.Velocity = delta * 12
-        RootPart.CFrame = CFrame.new(stickPos, leadPos)
+        FlightBodyVelocity.Velocity = Vector3.new(0, 0, 0)
+        pcall(function()
+            RootPart.CFrame = CFrame.new(targetPos, targetHRP.Position) * CFrame.Angles(math.rad(-90), 0, 0)
+        end)
     end
 end
 
--- ============================================================
--- AUTO HUNT LOOP
--- ============================================================
+-- ================================================
+-- ESP — draw boxes over all players
+-- ================================================
+local function CreateESP(p)
+    if ESPObjects[p] then return end
+    local billboard = Instance.new("BillboardGui")
+    billboard.Name = "NONTK_ESP_" .. p.Name
+    billboard.AlwaysOnTop = true
+    billboard.Size = UDim2.new(0, 100, 0, 40)
+    billboard.StudsOffset = Vector3.new(0, 3, 0)
+
+    local nameLabel = Instance.new("TextLabel", billboard)
+    nameLabel.Size = UDim2.new(1, 0, 0.6, 0)
+    nameLabel.BackgroundTransparency = 1
+    nameLabel.TextColor3 = Config.ESPColor
+    nameLabel.Font = Enum.Font.GothamBold
+    nameLabel.TextSize = 12
+    nameLabel.Text = p.Name
+
+    local infoLabel = Instance.new("TextLabel", billboard)
+    infoLabel.Size = UDim2.new(1, 0, 0.4, 0)
+    infoLabel.Position = UDim2.new(0, 0, 0.6, 0)
+    infoLabel.BackgroundTransparency = 1
+    infoLabel.TextColor3 = Color3.fromRGB(255, 255, 100)
+    infoLabel.Font = Enum.Font.Gotham
+    infoLabel.TextSize = 10
+    infoLabel.Text = "..."
+
+    ESPObjects[p] = {Billboard = billboard, Info = infoLabel, Name = nameLabel}
+
+    if p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
+        billboard.Adornee = p.Character.HumanoidRootPart
+        billboard.Parent = p.Character.HumanoidRootPart
+    end
+
+    p.CharacterAdded:Connect(function(char)
+        local hrp = char:WaitForChild("HumanoidRootPart")
+        billboard.Adornee = hrp
+        billboard.Parent = hrp
+    end)
+end
+
+local function RemoveESP(p)
+    if ESPObjects[p] then
+        pcall(function() ESPObjects[p].Billboard:Destroy() end)
+        ESPObjects[p] = nil
+    end
+end
+
+local function RefreshESP()
+    if not Config.ESPEnabled then
+        for p, _ in pairs(ESPObjects) do RemoveESP(p) end
+        return
+    end
+    for _, p in ipairs(Players:GetPlayers()) do
+        if p ~= LocalPlayer then CreateESP(p) end
+    end
+end
+
+Players.PlayerAdded:Connect(function(p)
+    if Config.ESPEnabled then CreateESP(p) end
+end)
+Players.PlayerRemoving:Connect(function(p)
+    RemoveESP(p)
+end)
+RefreshESP()
+
+-- Update ESP labels
+RunService.Heartbeat:Connect(function()
+    if not Config.ESPEnabled then return end
+    for p, obj in pairs(ESPObjects) do
+        pcall(function()
+            if p and p.Character then
+                local hp, maxHp = GetPlayerHealth(p)
+                local dist = GetDist(p)
+                local lvl = GetPlayerLevel(p)
+                obj.Info.Text = string.format("Lv.%d | %d/%d | %dstuds", lvl, hp, maxHp, dist)
+                obj.Name.TextColor3 = (p == CurrentTarget) and Color3.fromRGB(255, 60, 60) or Config.ESPColor
+            end
+        end)
+    end
+end)
+
+-- ================================================
+-- HUNT LOOP
+-- ================================================
 task.spawn(function()
     while true do
         task.wait(Config.HuntInterval)
@@ -532,353 +525,398 @@ task.spawn(function()
                 or not CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
                 or not CurrentTarget.Character:FindFirstChild("Humanoid")
                 or CurrentTarget.Character.Humanoid.Health <= 0
-
             if needNew then
-                local prev = CurrentTarget
+                if CurrentTarget then RestoreHitbox(CurrentTarget) end
                 CurrentTarget = AcquireBestTarget()
-                if CurrentTarget ~= prev then
-                    CombatTracker.Player        = CurrentTarget
-                    CombatTracker.EngagedTime   = 0
-                    CombatTracker.InitialHP     = 0
-                    CombatTracker.HasDealtDamage = false
-                    if Config.AimLock and CurrentTarget then EnableAimLock() end
-                end
+                CombatTracker.Player = CurrentTarget
+                CombatTracker.EngagedTime = 0
+                CombatTracker.InitialHP = 0
+                CombatTracker.HasDealtDamage = false
             end
         end
     end
 end)
 
--- ============================================================
--- MAIN COMBAT ENGINE (Punch + Skills + Race Awakening)
--- ============================================================
+-- ================================================
+-- MAIN COMBAT LOOP
+-- ================================================
 task.spawn(function()
     while true do
-        task.wait(Config.AttackDelay)
+        task.wait(0.01)
+        if Config.Enabled then
+            EnsurePvPAndHaki()
 
-        if not Config.Enabled then
-            ClearFlightPhysics()
-            CurrentTarget = nil
-            if AimLock_Locked then DisableAimLock() end
-            continue
-        end
-
-        EnsurePvPAndHaki()
-
-        -- Auto-Equip or Spawn Melee if not found
-        if Config.FocusMelee then
-            if not EnsureMeleeEquipped() then
-                SpawnAndEquipBestMelee()
-            end
-        end
-
-        -- Manual target validation
-        if Config.TargetMode == "Manual" and Config.SelectedPlayer then
-            local p = Config.SelectedPlayer
-            if p and p.Parent and p.Character
-                and p.Character:FindFirstChild("HumanoidRootPart")
-                and p.Character:FindFirstChild("Humanoid")
-                and p.Character.Humanoid.Health > 0 then
-                if CurrentTarget ~= p then
+            if Config.TargetMode == "Manual" and Config.SelectedPlayer then
+                local p = Config.SelectedPlayer
+                if p and p.Parent and p.Character
+                    and p.Character:FindFirstChild("HumanoidRootPart")
+                    and p.Character:FindFirstChild("Humanoid")
+                    and p.Character.Humanoid.Health > 0 then
                     CurrentTarget = p
-                    if Config.AimLock then EnableAimLock() end
-                end
-            else
-                CurrentTarget = nil
+                else CurrentTarget = nil end
             end
-        end
 
-        if not CurrentTarget or not CurrentTarget.Character then
-            if AimLock_Locked then DisableAimLock() end
-            continue
-        end
+            if CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("HumanoidRootPart") then
+                local tHRP = CurrentTarget.Character.HumanoidRootPart
+                local tHum = CurrentTarget.Character.Humanoid
 
-        local tHRP = CurrentTarget.Character:FindFirstChild("HumanoidRootPart")
-        local tHum = CurrentTarget.Character:FindFirstChild("Humanoid")
-        if not tHRP or not tHum or tHum.Health <= 0 then
-            CurrentTarget = nil
-            if AimLock_Locked then DisableAimLock() end
-            continue
-        end
+                if tHum.Health > 0 then
+                    ExpandHitbox(CurrentTarget)
+                    ApplySilentAim(tHRP)
+                    GlideToTarget(tHRP)
 
-        -- Ensure AimLock is active
-        if Config.AimLock and not AimLock_Locked then
-            EnableAimLock()
-        elseif not Config.AimLock and AimLock_Locked then
-            DisableAimLock()
-        end
+                    local dist = (RootPart.Position - tHRP.Position).Magnitude
 
-        -- Anti-Godmode / Blacklist check
-        do
-            local now = tick()
-            if CombatTracker.Player ~= CurrentTarget or CombatTracker.EngagedTime == 0 then
-                CombatTracker.Player        = CurrentTarget
-                CombatTracker.EngagedTime   = now
-                CombatTracker.InitialHP     = tHum.Health
-                CombatTracker.HasDealtDamage = false
-            else
-                if tHum.Health < CombatTracker.InitialHP then
-                    CombatTracker.HasDealtDamage = true
-                    CombatTracker.InitialHP     = tHum.Health
-                    CombatTracker.EngagedTime   = now
-                elseif not CombatTracker.HasDealtDamage then
-                    if (now - CombatTracker.EngagedTime) >= Config.DamageTestTime then
-                        BlacklistedTargets[CurrentTarget] = now + Config.BlacklistTime
-                        CurrentTarget = nil
-                        if AimLock_Locked then DisableAimLock() end
-                        CombatTracker.EngagedTime = 0
-                        continue
+                    if dist <= 40 then
+                        -- Combat tracker
+                        if CombatTracker.Player ~= CurrentTarget or CombatTracker.EngagedTime == 0 then
+                            CombatTracker.Player = CurrentTarget
+                            CombatTracker.EngagedTime = tick()
+                            CombatTracker.InitialHP = tHum.Health
+                            CombatTracker.HasDealtDamage = false
+                        else
+                            if tHum.Health < CombatTracker.InitialHP then
+                                CombatTracker.HasDealtDamage = true
+                                CombatTracker.InitialHP = tHum.Health
+                                CombatTracker.EngagedTime = tick()
+                            elseif not CombatTracker.HasDealtDamage then
+                                if (tick() - CombatTracker.EngagedTime) >= Config.DamageTestTime then
+                                    RestoreHitbox(CurrentTarget)
+                                    BlacklistedTargets[CurrentTarget] = tick() + Config.BlacklistTime
+                                    CurrentTarget = nil
+                                    CombatTracker.EngagedTime = 0
+                                end
+                            end
+                        end
+
+                        if CurrentTarget then
+                            -- Execute combo
+                            if dist <= 15 then AutoExecute(tHRP, tHum) end
+                            if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
+                                SwitchWeapon(); LastWeaponSwitch = tick()
+                            end
+                            ExecuteFastAttack(tHRP)
+                            CastSkills(tHRP, tHum)
+                        end
                     end
+                else
+                    RestoreHitbox(CurrentTarget)
+                    CurrentTarget = nil
                 end
             end
-        end
-
-        -- 1. Stick to Target
-        GlideToMeleeRange(tHRP)
-
-        -- 2. Auto Race V3 & V4 Activation
-        ProcessRaceAwakening(tHRP)
-
-        -- 3. Execute Attacks when within range (<= 25 studs)
-        local dist = (RootPart.Position - tHRP.Position).Magnitude
-        if dist <= 25 then
-            -- Rapid Melee Punch
-            ExecuteHyperFastAttack(tHRP)
-
-            -- Continuous Non-Blocking Skill Casting
-            ProcessContinuousSkills(tHRP, tHum)
+        else
+            ClearFlightPhysics()
+            if CurrentTarget then RestoreHitbox(CurrentTarget) end
+            CurrentTarget = nil
         end
     end
 end)
 
--- ============================================================
--- UI
--- ============================================================
+-- ================================================
+-- UI BUILD
+-- ================================================
 local function BuildUI()
+    -- destroy old
+    pcall(function()
+        local cg = game:GetService("CoreGui")
+        if cg:FindFirstChild("NONTKHub") then cg.NONTKHub:Destroy() end
+        if LocalPlayer:FindFirstChild("PlayerGui") and LocalPlayer.PlayerGui:FindFirstChild("NONTKHub") then
+            LocalPlayer.PlayerGui.NONTKHub:Destroy()
+        end
+    end)
+
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name        = "NONTKHub"
+    ScreenGui.Name = "NONTKHub"
     ScreenGui.ResetOnSpawn = false
+    ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
     local ok, coreGui = pcall(function() return game:GetService("CoreGui") end)
     ScreenGui.Parent = ok and coreGui or LocalPlayer:WaitForChild("PlayerGui")
 
-    -- MiniBar
+    -- ── THEME ──
+    local C = {
+        BG       = Color3.fromRGB(8, 8, 12),
+        Panel    = Color3.fromRGB(14, 14, 20),
+        Card     = Color3.fromRGB(18, 20, 28),
+        Accent   = Color3.fromRGB(90, 95, 200),
+        AccentB  = Color3.fromRGB(60, 180, 255),
+        Danger   = Color3.fromRGB(220, 50, 50),
+        Success  = Color3.fromRGB(50, 210, 100),
+        Warning  = Color3.fromRGB(255, 180, 30),
+        Text     = Color3.fromRGB(230, 235, 255),
+        TextDim  = Color3.fromRGB(120, 125, 160),
+        TextGlow = Color3.fromRGB(160, 200, 255),
+    }
+
+    local function MakeCorner(parent, r)
+        local uc = Instance.new("UICorner", parent)
+        uc.CornerRadius = UDim.new(0, r or 8)
+        return uc
+    end
+    local function MakeStroke(parent, color, thickness)
+        local s = Instance.new("UIStroke", parent)
+        s.Color = color or C.Accent
+        s.Thickness = thickness or 1.2
+        return s
+    end
+    local function MakePad(parent, top, bottom, left, right)
+        local p = Instance.new("UIPadding", parent)
+        p.PaddingTop = UDim.new(0, top or 4)
+        p.PaddingBottom = UDim.new(0, bottom or 4)
+        p.PaddingLeft = UDim.new(0, left or 6)
+        p.PaddingRight = UDim.new(0, right or 6)
+        return p
+    end
+
+    -- ─────────────────────────────────────────────
+    -- MINIBAR
+    -- ─────────────────────────────────────────────
     local MiniBar = Instance.new("Frame", ScreenGui)
-    MiniBar.Size            = UDim2.new(0, 240, 0, 36)
-    MiniBar.Position        = UDim2.new(0.5, -120, 0.0, 12)
-    MiniBar.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
+    MiniBar.Size = UDim2.new(0, 240, 0, 38)
+    MiniBar.Position = UDim2.new(0.5, -120, 0, 10)
+    MiniBar.BackgroundColor3 = C.Panel
     MiniBar.BorderSizePixel = 0
-    MiniBar.Active          = true
-    MiniBar.Draggable       = true
-    Instance.new("UICorner", MiniBar).CornerRadius = UDim.new(0, 8)
-    local MiniStroke = Instance.new("UIStroke", MiniBar)
-    MiniStroke.Color     = Color3.fromRGB(80, 85, 130)
-    MiniStroke.Thickness = 1.2
+    MiniBar.Active = true
+    MiniBar.Draggable = true
+    MakeCorner(MiniBar, 9)
+    MakeStroke(MiniBar, C.Accent, 1.3)
 
     local StatusDot = Instance.new("Frame", MiniBar)
-    StatusDot.Size            = UDim2.new(0, 10, 0, 10)
-    StatusDot.Position        = UDim2.new(0, 10, 0.5, -5)
+    StatusDot.Size = UDim2.new(0, 10, 0, 10)
+    StatusDot.Position = UDim2.new(0, 10, 0.5, -5)
     StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
     StatusDot.BorderSizePixel = 0
-    Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
+    MakeCorner(StatusDot, 99)
 
     local MiniLabel = Instance.new("TextLabel", MiniBar)
-    MiniLabel.Size             = UDim2.new(1, -70, 1, 0)
-    MiniLabel.Position         = UDim2.new(0, 26, 0, 0)
+    MiniLabel.Size = UDim2.new(1, -80, 1, 0)
+    MiniLabel.Position = UDim2.new(0, 26, 0, 0)
     MiniLabel.BackgroundTransparency = 1
-    MiniLabel.TextColor3       = Color3.fromRGB(210, 210, 255)
-    MiniLabel.Font             = Enum.Font.GothamBold
-    MiniLabel.TextSize         = 11
-    MiniLabel.TextXAlignment   = Enum.TextXAlignment.Left
-    MiniLabel.Text             = "NONTK | IDLE"
+    MiniLabel.TextColor3 = C.TextGlow
+    MiniLabel.Font = Enum.Font.GothamBold
+    MiniLabel.TextSize = 11
+    MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
+    MiniLabel.Text = "NONTK v82 | IDLE"
 
     local CollapseBtn = Instance.new("TextButton", MiniBar)
-    CollapseBtn.Size           = UDim2.new(0, 50, 1, -8)
-    CollapseBtn.Position       = UDim2.new(1, -56, 0, 4)
-    CollapseBtn.BackgroundColor3 = Color3.fromRGB(30, 32, 45)
-    CollapseBtn.TextColor3     = Color3.fromRGB(180, 200, 255)
-    CollapseBtn.Font           = Enum.Font.GothamBold
-    CollapseBtn.TextSize       = 11
-    CollapseBtn.Text           = "▼ HUB"
-    Instance.new("UICorner", CollapseBtn).CornerRadius = UDim.new(0, 5)
+    CollapseBtn.Size = UDim2.new(0, 60, 1, -8)
+    CollapseBtn.Position = UDim2.new(1, -66, 0, 4)
+    CollapseBtn.BackgroundColor3 = Color3.fromRGB(28, 30, 45)
+    CollapseBtn.TextColor3 = C.AccentB
+    CollapseBtn.Font = Enum.Font.GothamBold
+    CollapseBtn.TextSize = 11
+    CollapseBtn.Text = "▼ HUB"
+    MakeCorner(CollapseBtn, 5)
 
-    -- Main Panel
+    -- ─────────────────────────────────────────────
+    -- MAIN PANEL
+    -- ─────────────────────────────────────────────
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size            = UDim2.new(0, 380, 0, 560)
-    Main.Position        = UDim2.new(0.5, -190, 0.08, 0)
-    Main.BackgroundColor3 = Color3.fromRGB(12, 12, 16)
+    Main.Size = UDim2.new(0, 400, 0, 620)
+    Main.Position = UDim2.new(0.5, -200, 0, 56)
+    Main.BackgroundColor3 = C.BG
     Main.BorderSizePixel = 0
-    Main.Active          = true
-    Main.Draggable       = true
-    Main.Visible         = false
-    Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
-    local Stroke = Instance.new("UIStroke", Main)
-    Stroke.Color     = Color3.fromRGB(90, 95, 145)
-    Stroke.Thickness = 1.5
+    Main.Active = true
+    Main.Draggable = true
+    Main.Visible = false
+    MakeCorner(Main, 12)
+    MakeStroke(Main, C.Accent, 1.5)
 
+    -- header
     local Header = Instance.new("Frame", Main)
-    Header.Size            = UDim2.new(1, 0, 0, 44)
-    Header.BackgroundColor3 = Color3.fromRGB(18, 18, 28)
+    Header.Size = UDim2.new(1, 0, 0, 46)
+    Header.BackgroundColor3 = C.Card
     Header.BorderSizePixel = 0
-    Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 10)
+    MakeCorner(Header, 12)
 
     local HeaderTitle = Instance.new("TextLabel", Header)
-    HeaderTitle.Size             = UDim2.new(1, -50, 1, 0)
-    HeaderTitle.Position         = UDim2.new(0, 14, 0, 0)
+    HeaderTitle.Size = UDim2.new(1, -60, 1, 0)
+    HeaderTitle.Position = UDim2.new(0, 14, 0, 0)
     HeaderTitle.BackgroundTransparency = 1
-    HeaderTitle.TextColor3       = Color3.fromRGB(240, 240, 255)
-    HeaderTitle.Font             = Enum.Font.GothamBold
-    HeaderTitle.TextSize         = 13
-    HeaderTitle.TextXAlignment   = Enum.TextXAlignment.Left
-    HeaderTitle.Text             = "⚔ NONTK HYPER-MELEE v84"
+    HeaderTitle.TextColor3 = C.Text
+    HeaderTitle.Font = Enum.Font.GothamBold
+    HeaderTitle.TextSize = 13
+    HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
+    HeaderTitle.Text = "⚔ NONTK BOUNTY HUNTER v82 ULTRA"
 
     local CloseBtn = Instance.new("TextButton", Header)
-    CloseBtn.Size           = UDim2.new(0, 36, 0, 28)
-    CloseBtn.Position       = UDim2.new(1, -42, 0.5, -14)
-    CloseBtn.BackgroundColor3 = Color3.fromRGB(180, 50, 50)
-    CloseBtn.TextColor3     = Color3.fromRGB(255, 255, 255)
-    CloseBtn.Font           = Enum.Font.GothamBold
-    CloseBtn.TextSize       = 13
-    CloseBtn.Text           = "✕"
-    Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
-    CloseBtn.MouseButton1Click:Connect(function() Main.Visible = false; CollapseBtn.Text = "▼ HUB" end)
+    CloseBtn.Size = UDim2.new(0, 36, 0, 28)
+    CloseBtn.Position = UDim2.new(1, -44, 0.5, -14)
+    CloseBtn.BackgroundColor3 = C.Danger
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.TextSize = 14
+    CloseBtn.Text = "✕"
+    MakeCorner(CloseBtn, 6)
+    CloseBtn.MouseButton1Click:Connect(function()
+        Main.Visible = false
+        CollapseBtn.Text = "▼ HUB"
+    end)
 
     local IsOpen = false
     CollapseBtn.MouseButton1Click:Connect(function()
         IsOpen = not IsOpen
-        Main.Visible    = IsOpen
+        Main.Visible = IsOpen
         CollapseBtn.Text = IsOpen and "▲ HUB" or "▼ HUB"
     end)
 
-    -- Toggle Hunt
-    local Toggle = Instance.new("TextButton", Main)
-    Toggle.Size           = UDim2.new(0.92, 0, 0, 34)
-    Toggle.Position       = UDim2.new(0.04, 0, 0, 50)
-    Toggle.BackgroundColor3 = Color3.fromRGB(35, 35, 48)
-    Toggle.TextColor3     = Color3.fromRGB(255, 255, 255)
-    Toggle.Font           = Enum.Font.GothamBold
-    Toggle.TextSize       = 12
-    Toggle.Text           = "⏸ NONTK HUNT: OFF"
-    Instance.new("UICorner", Toggle).CornerRadius = UDim.new(0, 6)
+    -- ── CONTENT SCROLL ──
+    local Scroll = Instance.new("ScrollingFrame", Main)
+    Scroll.Size = UDim2.new(1, 0, 1, -50)
+    Scroll.Position = UDim2.new(0, 0, 0, 50)
+    Scroll.BackgroundTransparency = 1
+    Scroll.BorderSizePixel = 0
+    Scroll.ScrollBarThickness = 3
+    Scroll.ScrollBarImageColor3 = C.Accent
+    Scroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+    Scroll.AutomaticCanvasSize = Enum.AutomaticSize.Y
 
-    -- Mode Select
-    local ModeBtn = Instance.new("TextButton", Main)
-    ModeBtn.Size           = UDim2.new(0.92, 0, 0, 26)
-    ModeBtn.Position       = UDim2.new(0.04, 0, 0, 88)
-    ModeBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 40)
-    ModeBtn.TextColor3     = Color3.fromRGB(180, 200, 255)
-    ModeBtn.Font           = Enum.Font.GothamBold
-    ModeBtn.TextSize       = 11
-    ModeBtn.Text           = "🎯 TARGET: AUTO (PROXIMITY FIRST)"
-    Instance.new("UICorner", ModeBtn).CornerRadius = UDim.new(0, 6)
+    local ContentList = Instance.new("UIListLayout", Scroll)
+    ContentList.SortOrder = Enum.SortOrder.LayoutOrder
+    ContentList.Padding = UDim.new(0, 6)
+    MakePad(Scroll, 8, 8, 14, 14)
 
-    -- Row 1: Race Awakening + Spawn Melee
-    local RaceBtn = Instance.new("TextButton", Main)
-    RaceBtn.Size           = UDim2.new(0.48, 0, 0, 26)
-    RaceBtn.Position       = UDim2.new(0.04, 0, 0, 118)
-    RaceBtn.BackgroundColor3 = Color3.fromRGB(140, 40, 150)
-    RaceBtn.TextColor3     = Color3.fromRGB(255, 225, 255)
-    RaceBtn.Font           = Enum.Font.GothamBold
-    RaceBtn.TextSize       = 10
-    RaceBtn.Text           = "👑 RACE V3/V4: ON"
-    Instance.new("UICorner", RaceBtn).CornerRadius = UDim.new(0, 6)
+    -- helper: section card
+    local function Card(parent, h, order)
+        local f = Instance.new("Frame", parent)
+        f.Size = UDim2.new(1, 0, 0, h or 40)
+        f.BackgroundColor3 = C.Card
+        f.BorderSizePixel = 0
+        f.LayoutOrder = order or 0
+        MakeCorner(f, 7)
+        return f
+    end
 
-    local SpawnMeleeBtn = Instance.new("TextButton", Main)
-    SpawnMeleeBtn.Size           = UDim2.new(0.42, 0, 0, 26)
-    SpawnMeleeBtn.Position       = UDim2.new(0.54, 0, 0, 118)
-    SpawnMeleeBtn.BackgroundColor3 = Color3.fromRGB(190, 120, 20)
-    SpawnMeleeBtn.TextColor3     = Color3.fromRGB(255, 255, 255)
-    SpawnMeleeBtn.Font           = Enum.Font.GothamBold
-    SpawnMeleeBtn.TextSize       = 10
-    SpawnMeleeBtn.Text           = "⚡ SPAWN MELEE"
-    Instance.new("UICorner", SpawnMeleeBtn).CornerRadius = UDim.new(0, 6)
+    local function Label(parent, text, size, color, xalign)
+        local l = Instance.new("TextLabel", parent)
+        l.Size = UDim2.new(1, -12, 0, 18)
+        l.Position = UDim2.new(0, 6, 0, 3)
+        l.BackgroundTransparency = 1
+        l.Text = text
+        l.TextColor3 = color or C.TextGlow
+        l.Font = Enum.Font.GothamBold
+        l.TextSize = size or 11
+        l.TextXAlignment = xalign or Enum.TextXAlignment.Left
+        return l
+    end
 
-    -- Row 2: Melee Only + AimLock + Part
-    local MeleeBtn = Instance.new("TextButton", Main)
-    MeleeBtn.Size           = UDim2.new(0.38, 0, 0, 26)
-    MeleeBtn.Position       = UDim2.new(0.04, 0, 0, 148)
-    MeleeBtn.BackgroundColor3 = Color3.fromRGB(180, 90, 30)
-    MeleeBtn.TextColor3     = Color3.fromRGB(255, 240, 210)
-    MeleeBtn.Font           = Enum.Font.GothamBold
-    MeleeBtn.TextSize       = 10
-    MeleeBtn.Text           = "🥊 MELEE: ON"
-    Instance.new("UICorner", MeleeBtn).CornerRadius = UDim.new(0, 6)
+    local function Btn(parent, text, size, order)
+        local b = Instance.new("TextButton", parent)
+        b.Size = size or UDim2.new(1, -8, 0, 32)
+        b.Position = UDim2.new(0, 4, 0, 4)
+        b.BackgroundColor3 = Color3.fromRGB(30, 32, 50)
+        b.TextColor3 = C.Text
+        b.Font = Enum.Font.GothamBold
+        b.TextSize = 12
+        b.Text = text
+        b.LayoutOrder = order or 0
+        MakeCorner(b, 7)
+        return b
+    end
 
-    local AimLockBtn = Instance.new("TextButton", Main)
-    AimLockBtn.Size           = UDim2.new(0.32, 0, 0, 26)
-    AimLockBtn.Position       = UDim2.new(0.44, 0, 0, 148)
-    AimLockBtn.BackgroundColor3 = Color3.fromRGB(30, 90, 140)
-    AimLockBtn.TextColor3     = Color3.fromRGB(200, 240, 255)
-    AimLockBtn.Font           = Enum.Font.GothamBold
-    AimLockBtn.TextSize       = 10
-    AimLockBtn.Text           = "🎯 AIMLOCK: ON"
-    Instance.new("UICorner", AimLockBtn).CornerRadius = UDim.new(0, 6)
+    -- ─────────────────────────────────────────────
+    -- [1] MAIN TOGGLE
+    -- ─────────────────────────────────────────────
+    local ToggleCard = Card(Scroll, 44, 1)
+    local Toggle = Btn(ToggleCard, "⏸ NONTK HUNT: OFF", UDim2.new(1, -8, 0, 36))
+    Toggle.Position = UDim2.new(0, 4, 0, 4)
+    Toggle.BackgroundColor3 = Color3.fromRGB(32, 34, 50)
+    MakeStroke(Toggle, C.Accent, 1)
 
-    local AimPartBtn = Instance.new("TextButton", Main)
-    AimPartBtn.Size           = UDim2.new(0.18, 0, 0, 26)
-    AimPartBtn.Position       = UDim2.new(0.78, 0, 0, 148)
-    AimPartBtn.BackgroundColor3 = Color3.fromRGB(28, 30, 46)
-    AimPartBtn.TextColor3     = Color3.fromRGB(170, 190, 235)
-    AimPartBtn.Font           = Enum.Font.GothamBold
-    AimPartBtn.TextSize       = 10
-    AimPartBtn.Text           = "HRP"
-    Instance.new("UICorner", AimPartBtn).CornerRadius = UDim.new(0, 6)
+    Toggle.MouseButton1Click:Connect(function()
+        Config.Enabled = not Config.Enabled
+        if Config.Enabled then
+            Toggle.BackgroundColor3 = Color3.fromRGB(30, 160, 80)
+            Toggle.Text = "▶ NONTK HUNT: ACTIVE 🔥"
+            MakeStroke(Toggle, C.Success, 1.5)
+            SetupFlightPhysics()
+        else
+            Toggle.BackgroundColor3 = Color3.fromRGB(32, 34, 50)
+            Toggle.Text = "⏸ NONTK HUNT: OFF"
+            MakeStroke(Toggle, C.Accent, 1)
+            ClearFlightPhysics()
+            CurrentTarget = nil
+        end
+    end)
 
-    -- Speed Slider
-    local SpeedSection = Instance.new("Frame", Main)
-    SpeedSection.Size            = UDim2.new(0.92, 0, 0, 50)
-    SpeedSection.Position        = UDim2.new(0.04, 0, 0, 178)
-    SpeedSection.BackgroundColor3 = Color3.fromRGB(18, 20, 30)
-    SpeedSection.BorderSizePixel = 0
-    Instance.new("UICorner", SpeedSection).CornerRadius = UDim.new(0, 6)
+    -- ─────────────────────────────────────────────
+    -- [2] TARGET MODE
+    -- ─────────────────────────────────────────────
+    local ModeCard = Card(Scroll, 38, 2)
+    local ModeBtn = Btn(ModeCard, "🎯 TARGET: AUTO (PROXIMITY)", UDim2.new(1, -8, 0, 30))
+    ModeBtn.Position = UDim2.new(0, 4, 0, 4)
+    ModeBtn.TextColor3 = C.AccentB
 
-    local SpeedLabel = Instance.new("TextLabel", SpeedSection)
-    SpeedLabel.Size             = UDim2.new(0.75, 0, 0, 18)
-    SpeedLabel.Position         = UDim2.new(0, 10, 0, 2)
-    SpeedLabel.BackgroundTransparency = 1
-    SpeedLabel.TextColor3       = Color3.fromRGB(200, 220, 255)
-    SpeedLabel.Font             = Enum.Font.GothamBold
-    SpeedLabel.TextSize         = 11
-    SpeedLabel.TextXAlignment   = Enum.TextXAlignment.Left
-    SpeedLabel.Text             = "✈ FLY SPEED: 160 studs/s"
+    ModeBtn.MouseButton1Click:Connect(function()
+        if Config.TargetMode == "Auto" then
+            Config.TargetMode = "Manual"
+            ModeBtn.Text = "🎯 TARGET: MANUAL (" .. (Config.SelectedPlayer and Config.SelectedPlayer.Name or "None") .. ")"
+            CurrentTarget = Config.SelectedPlayer
+        else
+            Config.TargetMode = "Auto"
+            Config.SelectedPlayer = nil
+            ModeBtn.Text = "🎯 TARGET: AUTO (PROXIMITY)"
+            CurrentTarget = nil
+        end
+    end)
 
-    local SpeedNote = Instance.new("TextLabel", SpeedSection)
-    SpeedNote.Size             = UDim2.new(1, -10, 0, 12)
-    SpeedNote.Position         = UDim2.new(0, 10, 0, 18)
-    SpeedNote.BackgroundTransparency = 1
-    SpeedNote.TextColor3       = Color3.fromRGB(110, 120, 150)
-    SpeedNote.Font             = Enum.Font.Gotham
-    SpeedNote.TextSize         = 9
-    SpeedNote.TextXAlignment   = Enum.TextXAlignment.Left
-    SpeedNote.Text             = "Safe: 90-175 studs/s | >175 = rollback risk"
+    -- ─────────────────────────────────────────────
+    -- [3] SPEED SLIDER
+    -- ─────────────────────────────────────────────
+    local SpeedCard = Card(Scroll, 72, 3)
+    SpeedCard.BackgroundColor3 = Color3.fromRGB(14, 16, 26)
+    MakeStroke(SpeedCard, C.AccentB, 1)
 
-    local SliderTrack = Instance.new("Frame", SpeedSection)
-    SliderTrack.Size            = UDim2.new(0.78, 0, 0, 7)
-    SliderTrack.Position        = UDim2.new(0.1, 0, 0, 36)
-    SliderTrack.BackgroundColor3 = Color3.fromRGB(35, 35, 55)
+    local SpeedLbl = Instance.new("TextLabel", SpeedCard)
+    SpeedLbl.Size = UDim2.new(0.7, 0, 0, 20)
+    SpeedLbl.Position = UDim2.new(0, 10, 0, 4)
+    SpeedLbl.BackgroundTransparency = 1
+    SpeedLbl.TextColor3 = C.AccentB
+    SpeedLbl.Font = Enum.Font.GothamBold
+    SpeedLbl.TextSize = 12
+    SpeedLbl.TextXAlignment = Enum.TextXAlignment.Left
+    SpeedLbl.Text = "✈ FLY SPEED: 300 studs/s"
+
+    local SpeedWarn = Instance.new("TextLabel", SpeedCard)
+    SpeedWarn.Size = UDim2.new(1, -10, 0, 12)
+    SpeedWarn.Position = UDim2.new(0, 10, 0, 24)
+    SpeedWarn.BackgroundTransparency = 1
+    SpeedWarn.TextColor3 = C.TextDim
+    SpeedWarn.Font = Enum.Font.Gotham
+    SpeedWarn.TextSize = 9
+    SpeedWarn.TextXAlignment = Enum.TextXAlignment.Left
+    SpeedWarn.Text = "Safe ≤175 | 176–500 risky | >500 fast TP assist | Max: 9999"
+
+    local SliderTrack = Instance.new("Frame", SpeedCard)
+    SliderTrack.Size = UDim2.new(0.76, 0, 0, 8)
+    SliderTrack.Position = UDim2.new(0.12, 0, 0, 50)
+    SliderTrack.BackgroundColor3 = Color3.fromRGB(30, 32, 52)
     SliderTrack.BorderSizePixel = 0
-    Instance.new("UICorner", SliderTrack).CornerRadius = UDim.new(1, 0)
+    MakeCorner(SliderTrack, 99)
 
     local SliderFill = Instance.new("Frame", SliderTrack)
-    SliderFill.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
-    SliderFill.BorderSizePixel  = 0
-    SliderFill.Size             = UDim2.new(0.733, 0, 1, 0)
-    Instance.new("UICorner", SliderFill).CornerRadius = UDim.new(1, 0)
+    SliderFill.BackgroundColor3 = C.AccentB
+    SliderFill.BorderSizePixel = 0
+    local initRatio = (Config.FlySpeed - Config.SpeedMin) / (Config.SpeedMax - Config.SpeedMin)
+    SliderFill.Size = UDim2.new(initRatio, 0, 1, 0)
+    MakeCorner(SliderFill, 99)
 
     local SliderKnob = Instance.new("TextButton", SliderTrack)
-    SliderKnob.Size            = UDim2.new(0, 14, 0, 14)
-    SliderKnob.Position        = UDim2.new(0.733, -7, 0.5, -7)
-    SliderKnob.BackgroundColor3 = Color3.fromRGB(120, 190, 255)
-    SliderKnob.Text            = ""
+    SliderKnob.Size = UDim2.new(0, 18, 0, 18)
+    SliderKnob.Position = UDim2.new(initRatio, -9, 0.5, -9)
+    SliderKnob.BackgroundColor3 = Color3.fromRGB(130, 200, 255)
+    SliderKnob.Text = ""
     SliderKnob.BorderSizePixel = 0
-    Instance.new("UICorner", SliderKnob).CornerRadius = UDim.new(1, 0)
+    MakeCorner(SliderKnob, 99)
 
-    local SpeedMin, SpeedMax = 50, 200
     local isDragging = false
 
     local function UpdateSlider()
-        local ratio = math.clamp((Config.FlySpeed - SpeedMin) / (SpeedMax - SpeedMin), 0, 1)
-        SliderFill.Size     = UDim2.new(ratio, 0, 1, 0)
-        SliderKnob.Position = UDim2.new(ratio, -7, 0.5, -7)
-        SpeedLabel.Text     = string.format("✈ FLY SPEED: %d studs/s", Config.FlySpeed)
+        local ratio = math.clamp((Config.FlySpeed - Config.SpeedMin) / (Config.SpeedMax - Config.SpeedMin), 0, 1)
+        SliderFill.Size = UDim2.new(ratio, 0, 1, 0)
+        SliderKnob.Position = UDim2.new(ratio, -9, 0.5, -9)
+        SpeedLbl.Text = string.format("✈ FLY SPEED: %d studs/s%s",
+            Config.FlySpeed, Config.FlySpeed > 500 and " [TP MODE]" or Config.FlySpeed > 175 and " [RISKY]" or " [SAFE]")
+        SliderFill.BackgroundColor3 = Config.FlySpeed > 500 and C.Danger or Config.FlySpeed > 175 and C.Warning or C.AccentB
     end
 
     SliderKnob.MouseButton1Down:Connect(function() isDragging = true end)
@@ -888,85 +926,162 @@ local function BuildUI()
     RunService.RenderStepped:Connect(function()
         if isDragging then
             local mouse = LocalPlayer:GetMouse()
-            local ratio  = math.clamp((mouse.X - SliderTrack.AbsolutePosition.X) / SliderTrack.AbsoluteSize.X, 0, 1)
-            Config.FlySpeed = math.floor(SpeedMin + ratio * (SpeedMax - SpeedMin))
+            local ratio = math.clamp(
+                (mouse.X - SliderTrack.AbsolutePosition.X) / SliderTrack.AbsoluteSize.X, 0, 1)
+            Config.FlySpeed = math.floor(Config.SpeedMin + ratio * (Config.SpeedMax - Config.SpeedMin))
             UpdateSlider()
         end
     end)
 
-    local BtnMinus = Instance.new("TextButton", SpeedSection)
-    BtnMinus.Size           = UDim2.new(0, 22, 0, 18)
-    BtnMinus.Position       = UDim2.new(0, 4, 0, 26)
-    BtnMinus.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
-    BtnMinus.TextColor3     = Color3.fromRGB(255, 255, 255)
-    BtnMinus.Font           = Enum.Font.GothamBold
-    BtnMinus.TextSize       = 13
-    BtnMinus.Text           = "-"
-    Instance.new("UICorner", BtnMinus).CornerRadius = UDim.new(0, 4)
-    BtnMinus.MouseButton1Click:Connect(function()
-        Config.FlySpeed = math.max(SpeedMin, Config.FlySpeed - 10); UpdateSlider()
+    -- −/+ buttons
+    local SpeedMinus = Instance.new("TextButton", SpeedCard)
+    SpeedMinus.Size = UDim2.new(0, 26, 0, 24)
+    SpeedMinus.Position = UDim2.new(0, 4, 0, 44)
+    SpeedMinus.BackgroundColor3 = Color3.fromRGB(50, 50, 80)
+    SpeedMinus.TextColor3 = C.Text
+    SpeedMinus.Font = Enum.Font.GothamBold
+    SpeedMinus.TextSize = 16
+    SpeedMinus.Text = "−"
+    MakeCorner(SpeedMinus, 5)
+    SpeedMinus.MouseButton1Click:Connect(function()
+        Config.FlySpeed = math.max(Config.SpeedMin, Config.FlySpeed - 25)
+        UpdateSlider()
     end)
 
-    local BtnPlus = Instance.new("TextButton", SpeedSection)
-    BtnPlus.Size           = UDim2.new(0, 22, 0, 18)
-    BtnPlus.Position       = UDim2.new(1, -26, 0, 26)
-    BtnPlus.BackgroundColor3 = Color3.fromRGB(55, 55, 80)
-    BtnPlus.TextColor3     = Color3.fromRGB(255, 255, 255)
-    BtnPlus.Font           = Enum.Font.GothamBold
-    BtnPlus.TextSize       = 13
-    BtnPlus.Text           = "+"
-    Instance.new("UICorner", BtnPlus).CornerRadius = UDim.new(0, 4)
-    BtnPlus.MouseButton1Click:Connect(function()
-        Config.FlySpeed = math.min(SpeedMax, Config.FlySpeed + 10); UpdateSlider()
+    local SpeedPlus = Instance.new("TextButton", SpeedCard)
+    SpeedPlus.Size = UDim2.new(0, 26, 0, 24)
+    SpeedPlus.Position = UDim2.new(1, -30, 0, 44)
+    SpeedPlus.BackgroundColor3 = Color3.fromRGB(50, 50, 80)
+    SpeedPlus.TextColor3 = C.Text
+    SpeedPlus.Font = Enum.Font.GothamBold
+    SpeedPlus.TextSize = 16
+    SpeedPlus.Text = "+"
+    MakeCorner(SpeedPlus, 5)
+    SpeedPlus.MouseButton1Click:Connect(function()
+        Config.FlySpeed = math.min(Config.SpeedMax, Config.FlySpeed + 25)
+        UpdateSlider()
     end)
 
-    -- Nearest Radar
-    local NearestRadar = Instance.new("TextLabel", Main)
-    NearestRadar.Size           = UDim2.new(0.92, 0, 0, 34)
-    NearestRadar.Position       = UDim2.new(0.04, 0, 0, 232)
-    NearestRadar.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
-    NearestRadar.TextColor3     = Color3.fromRGB(120, 235, 160)
-    NearestRadar.Font           = Enum.Font.GothamBold
-    NearestRadar.TextSize       = 11
-    NearestRadar.TextWrapped    = true
-    NearestRadar.Text           = "Radar: Scanning..."
-    Instance.new("UICorner", NearestRadar).CornerRadius = UDim.new(0, 6)
+    -- ─────────────────────────────────────────────
+    -- [4] GODMODE TOGGLES GRID
+    -- ─────────────────────────────────────────────
+    local GodCard = Card(Scroll, 130, 4)
+    GodCard.BackgroundColor3 = Color3.fromRGB(14, 14, 22)
 
-    -- Player List
-    local PlayerListFrame = Instance.new("ScrollingFrame", Main)
-    PlayerListFrame.Size           = UDim2.new(0.92, 0, 0, 120)
-    PlayerListFrame.Position       = UDim2.new(0.04, 0, 0, 270)
-    PlayerListFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 22)
+    local GodTitle = Label(GodCard, "⚙ GODMODE OPTIONS", 11, C.Warning)
+    GodTitle.Position = UDim2.new(0, 8, 0, 4)
+
+    local toggleDefs = {
+        {key = "AntiDie",      label = "💀 ANTI-DIE",        color = C.Danger},
+        {key = "HitboxExpand", label = "📦 HITBOX EXPAND",   color = C.AccentB},
+        {key = "SilentAim",    label = "🎯 SILENT AIM",      color = C.Success},
+        {key = "NoclipEnabled",label = "👻 NOCLIP",          color = C.TextGlow},
+        {key = "InfiniteCombo",label = "♾ INF COMBO",        color = C.Warning},
+        {key = "AutoExecute",  label = "⚡ AUTO EXECUTE",    color = C.Danger},
+        {key = "ESPEnabled",   label = "🔍 ESP",             color = C.Success},
+        {key = "AutoRespawn",  label = "🔄 AUTO RESPAWN",    color = C.AccentB},
+    }
+
+    local cols = 4
+    local btnW = 0.235
+    local btnGap = 0.01
+    for i, def in ipairs(toggleDefs) do
+        local col = (i - 1) % cols
+        local row = math.floor((i - 1) / cols)
+        local tb = Instance.new("TextButton", GodCard)
+        tb.Size = UDim2.new(btnW, -4, 0, 26)
+        tb.Position = UDim2.new(col * (btnW + btnGap) + 0.008, 0, 0, 26 + row * 30)
+        local active = Config[def.key]
+        tb.BackgroundColor3 = active and Color3.fromRGB(20, 80, 40) or Color3.fromRGB(28, 28, 42)
+        tb.TextColor3 = active and def.color or C.TextDim
+        tb.Font = Enum.Font.GothamBold
+        tb.TextSize = 9
+        tb.Text = def.label
+        MakeCorner(tb, 5)
+
+        tb.MouseButton1Click:Connect(function()
+            Config[def.key] = not Config[def.key]
+            local on = Config[def.key]
+            tb.BackgroundColor3 = on and Color3.fromRGB(20, 80, 40) or Color3.fromRGB(28, 28, 42)
+            tb.TextColor3 = on and def.color or C.TextDim
+            if def.key == "ESPEnabled" then RefreshESP() end
+        end)
+    end
+
+    -- Hitbox size slider row
+    local HBLabel = Instance.new("TextLabel", GodCard)
+    HBLabel.Size = UDim2.new(0.5, 0, 0, 14)
+    HBLabel.Position = UDim2.new(0, 8, 0, 110)
+    HBLabel.BackgroundTransparency = 1
+    HBLabel.TextColor3 = C.AccentB
+    HBLabel.Font = Enum.Font.Gotham
+    HBLabel.TextSize = 9
+    HBLabel.TextXAlignment = Enum.TextXAlignment.Left
+    HBLabel.Text = string.format("Hitbox: %d studs", Config.HitboxSize)
+
+    local HBMinus = Instance.new("TextButton", GodCard)
+    HBMinus.Size = UDim2.new(0, 22, 0, 18)
+    HBMinus.Position = UDim2.new(0.55, 0, 0, 107)
+    HBMinus.BackgroundColor3 = Color3.fromRGB(40, 40, 65)
+    HBMinus.TextColor3 = C.Text
+    HBMinus.Font = Enum.Font.GothamBold
+    HBMinus.TextSize = 14
+    HBMinus.Text = "−"
+    MakeCorner(HBMinus, 4)
+    HBMinus.MouseButton1Click:Connect(function()
+        Config.HitboxSize = math.max(5, Config.HitboxSize - 5)
+        HBLabel.Text = string.format("Hitbox: %d studs", Config.HitboxSize)
+    end)
+
+    local HBPlus = Instance.new("TextButton", GodCard)
+    HBPlus.Size = UDim2.new(0, 22, 0, 18)
+    HBPlus.Position = UDim2.new(0.55, 26, 0, 107)
+    HBPlus.BackgroundColor3 = Color3.fromRGB(40, 40, 65)
+    HBPlus.TextColor3 = C.Text
+    HBPlus.Font = Enum.Font.GothamBold
+    HBPlus.TextSize = 14
+    HBPlus.Text = "+"
+    MakeCorner(HBPlus, 4)
+    HBPlus.MouseButton1Click:Connect(function()
+        Config.HitboxSize = math.min(200, Config.HitboxSize + 5)
+        HBLabel.Text = string.format("Hitbox: %d studs", Config.HitboxSize)
+    end)
+
+    -- ─────────────────────────────────────────────
+    -- [5] RADAR
+    -- ─────────────────────────────────────────────
+    local RadarCard = Card(Scroll, 44, 5)
+    local NearestRadar = Instance.new("TextLabel", RadarCard)
+    NearestRadar.Size = UDim2.new(1, -12, 1, -8)
+    NearestRadar.Position = UDim2.new(0, 6, 0, 4)
+    NearestRadar.BackgroundTransparency = 1
+    NearestRadar.TextColor3 = C.Success
+    NearestRadar.Font = Enum.Font.GothamBold
+    NearestRadar.TextSize = 11
+    NearestRadar.TextWrapped = true
+    NearestRadar.Text = "🎯 Radar: Scanning..."
+
+    -- ─────────────────────────────────────────────
+    -- [6] PLAYER LIST
+    -- ─────────────────────────────────────────────
+    local ListCard = Card(Scroll, 148, 6)
+    local ListTitle = Label(ListCard, "👥 PLAYER LIST — click to target", 10, C.TextDim)
+    ListTitle.Position = UDim2.new(0, 8, 0, 3)
+
+    local PlayerListFrame = Instance.new("ScrollingFrame", ListCard)
+    PlayerListFrame.Size = UDim2.new(1, -8, 0, 116)
+    PlayerListFrame.Position = UDim2.new(0, 4, 0, 22)
+    PlayerListFrame.BackgroundColor3 = Color3.fromRGB(10, 10, 14)
     PlayerListFrame.BorderSizePixel = 0
-    PlayerListFrame.CanvasSize     = UDim2.new(0, 0, 0, 0)
-    PlayerListFrame.ScrollBarThickness = 4
-    Instance.new("UICorner", PlayerListFrame).CornerRadius = UDim.new(0, 6)
-    local UIListLayout = Instance.new("UIListLayout", PlayerListFrame)
-    UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    UIListLayout.Padding   = UDim.new(0, 4)
+    PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, 0)
+    PlayerListFrame.ScrollBarThickness = 3
+    PlayerListFrame.ScrollBarImageColor3 = C.AccentB
+    MakeCorner(PlayerListFrame, 5)
 
-    -- Status Box
-    local Status = Instance.new("TextLabel", Main)
-    Status.Size           = UDim2.new(0.92, 0, 0, 95)
-    Status.Position       = UDim2.new(0.04, 0, 0, 396)
-    Status.BackgroundColor3 = Color3.fromRGB(14, 14, 20)
-    Status.TextColor3     = Color3.fromRGB(200, 220, 255)
-    Status.Font           = Enum.Font.Gotham
-    Status.TextSize       = 11
-    Status.TextWrapped    = true
-    Status.Text           = "Status: Standing By"
-    Instance.new("UICorner", Status).CornerRadius = UDim.new(0, 6)
-
-    -- Refresh Button
-    local RefreshBtn = Instance.new("TextButton", Main)
-    RefreshBtn.Size           = UDim2.new(0.92, 0, 0, 26)
-    RefreshBtn.Position       = UDim2.new(0.04, 0, 0, 497)
-    RefreshBtn.BackgroundColor3 = Color3.fromRGB(26, 28, 42)
-    RefreshBtn.TextColor3     = Color3.fromRGB(160, 190, 255)
-    RefreshBtn.Font           = Enum.Font.GothamBold
-    RefreshBtn.TextSize       = 11
-    RefreshBtn.Text           = "🔄 REFRESH PLAYER LIST"
-    Instance.new("UICorner", RefreshBtn).CornerRadius = UDim.new(0, 6)
+    local UIListLayout2 = Instance.new("UIListLayout", PlayerListFrame)
+    UIListLayout2.SortOrder = Enum.SortOrder.LayoutOrder
+    UIListLayout2.Padding = UDim.new(0, 3)
+    MakePad(PlayerListFrame, 4, 4, 4, 4)
 
     local PlayerButtons = {}
 
@@ -979,196 +1094,156 @@ local function BuildUI()
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer then
                 count = count + 1
-                local lvl       = GetPlayerLevel(p)
+                local lvl = GetPlayerLevel(p)
                 local hp, maxHp = GetPlayerHealth(p)
-                local dist      = GetDistanceToPlayer(p)
-                local pvp       = IsPvPActive(p) and "ON" or "OFF"
+                local dist = GetDist(p)
+                local pvp = IsPvPActive(p) and "✅" or "❌"
+                local isTarget = (p == CurrentTarget or p == Config.SelectedPlayer)
 
                 local pBtn = Instance.new("TextButton", PlayerListFrame)
-                pBtn.Size           = UDim2.new(0.96, 0, 0, 30)
-                pBtn.BackgroundColor3 = (Config.SelectedPlayer == p)
-                    and Color3.fromRGB(40, 120, 70) or Color3.fromRGB(22, 22, 32)
-                pBtn.TextColor3     = Color3.fromRGB(230, 230, 255)
-                pBtn.Font           = Enum.Font.Gotham
-                pBtn.TextSize       = 10
+                pBtn.Size = UDim2.new(1, -4, 0, 26)
+                pBtn.BackgroundColor3 = isTarget and Color3.fromRGB(35, 115, 65) or Color3.fromRGB(18, 18, 28)
+                pBtn.TextColor3 = isTarget and Color3.fromRGB(150, 255, 170) or C.Text
+                pBtn.Font = Enum.Font.Gotham
+                pBtn.TextSize = 10
                 pBtn.TextXAlignment = Enum.TextXAlignment.Left
-                pBtn.Text = string.format(
-                    "  PvP:%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
-                Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
+                pBtn.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
+                MakeCorner(pBtn, 4)
                 PlayerButtons[p] = pBtn
 
                 pBtn.MouseButton1Click:Connect(function()
                     Config.SelectedPlayer = p
-                    Config.TargetMode     = "Manual"
-                    ModeBtn.Text          = "TARGET: MANUAL (" .. p.Name .. ")"
-                    CurrentTarget         = p
-                    CombatTracker.EngagedTime    = 0
+                    Config.TargetMode = "Manual"
+                    ModeBtn.Text = "🎯 TARGET: MANUAL (" .. p.Name .. ")"
+                    CurrentTarget = p
+                    CombatTracker.EngagedTime = 0
                     CombatTracker.HasDealtDamage = false
                     PopulatePlayerList()
                 end)
             end
         end
-        PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, count * 34)
+        PlayerListFrame.CanvasSize = UDim2.new(0, 0, 0, count * 30)
     end
 
     PopulatePlayerList()
     Players.PlayerAdded:Connect(PopulatePlayerList)
     Players.PlayerRemoving:Connect(PopulatePlayerList)
+
+    local RefreshBtn = Btn(Scroll, "🔄 REFRESH LIST", UDim2.new(1, 0, 0, 30), 7)
+    RefreshBtn.Position = UDim2.new(0, 0, 0, 0)
+    RefreshBtn.BackgroundColor3 = Color3.fromRGB(22, 24, 38)
+    RefreshBtn.TextColor3 = C.AccentB
     RefreshBtn.MouseButton1Click:Connect(PopulatePlayerList)
 
-    Toggle.MouseButton1Click:Connect(function()
-        Config.Enabled = not Config.Enabled
-        Toggle.BackgroundColor3 = Config.Enabled
-            and Color3.fromRGB(40, 155, 85) or Color3.fromRGB(35, 35, 48)
-        Toggle.Text = Config.Enabled and "NONTK HUNT: ACTIVE" or "NONTK HUNT: OFF"
-        if not Config.Enabled then
-            ClearFlightPhysics()
-            CurrentTarget = nil
-            if AimLock_Locked then DisableAimLock() end
-        end
-    end)
+    -- ─────────────────────────────────────────────
+    -- [7] STATUS BOX
+    -- ─────────────────────────────────────────────
+    local StatusCard = Card(Scroll, 88, 8)
+    local Status = Instance.new("TextLabel", StatusCard)
+    Status.Size = UDim2.new(1, -12, 1, -8)
+    Status.Position = UDim2.new(0, 6, 0, 4)
+    Status.BackgroundTransparency = 1
+    Status.TextColor3 = C.TextGlow
+    Status.Font = Enum.Font.Gotham
+    Status.TextSize = 11
+    Status.TextWrapped = true
+    Status.Text = "⏸ Waiting..."
 
-    ModeBtn.MouseButton1Click:Connect(function()
-        if Config.TargetMode == "Auto" then
-            Config.TargetMode = "Manual"
-            ModeBtn.Text = "TARGET: MANUAL (" .. (Config.SelectedPlayer and Config.SelectedPlayer.Name or "None") .. ")"
-            CurrentTarget = Config.SelectedPlayer
-        else
-            Config.TargetMode     = "Auto"
-            Config.SelectedPlayer = nil
-            ModeBtn.Text          = "TARGET: AUTO (PROXIMITY FIRST)"
-            CurrentTarget         = nil
-            PopulatePlayerList()
-        end
-    end)
-
-    RaceBtn.MouseButton1Click:Connect(function()
-        Config.AutoRace = not Config.AutoRace
-        RaceBtn.BackgroundColor3 = Config.AutoRace and Color3.fromRGB(140, 40, 150) or Color3.fromRGB(40, 40, 50)
-        RaceBtn.Text = Config.AutoRace and "👑 RACE V3/V4: ON" or "👑 RACE V3/V4: OFF"
-    end)
-
-    SpawnMeleeBtn.MouseButton1Click:Connect(function()
-        SpawnMeleeBtn.Text = "⚡ SPAWNING..."
-        task.spawn(function()
-            SpawnAndEquipBestMelee()
-            task.wait(0.3)
-            local tool = Character and Character:FindFirstChildOfClass("Tool")
-            SpawnMeleeBtn.Text = tool and ("⚡ " .. tool.Name) or "⚡ SPAWN MELEE"
-            task.wait(1.5)
-            SpawnMeleeBtn.Text = "⚡ SPAWN MELEE"
-        end)
-    end)
-
-    MeleeBtn.MouseButton1Click:Connect(function()
-        Config.FocusMelee = not Config.FocusMelee
-        MeleeBtn.BackgroundColor3 = Config.FocusMelee and Color3.fromRGB(180, 90, 30) or Color3.fromRGB(40, 40, 50)
-        MeleeBtn.Text = Config.FocusMelee and "🥊 MELEE: ON" or "🥊 MELEE: OFF"
-    end)
-
-    AimLockBtn.MouseButton1Click:Connect(function()
-        Config.AimLock = not Config.AimLock
-        AimLockBtn.BackgroundColor3 = Config.AimLock and Color3.fromRGB(30, 90, 140) or Color3.fromRGB(26, 28, 40)
-        AimLockBtn.Text = Config.AimLock and "🎯 AIMLOCK: ON" or "🎯 AIMLOCK: OFF"
-        if Config.AimLock and Config.Enabled and CurrentTarget then
-            EnableAimLock()
-        else
-            DisableAimLock()
-        end
-    end)
-
-    AimPartBtn.MouseButton1Click:Connect(function()
-        if Config.AimLockTarget == "HRP" then
-            Config.AimLockTarget = "HEAD"
-        else
-            Config.AimLockTarget = "HRP"
-        end
-        AimPartBtn.Text = Config.AimLockTarget
-    end)
-
-    -- Real-time refresh
+    -- ─────────────────────────────────────────────
+    -- REAL-TIME UPDATE LOOP
+    -- ─────────────────────────────────────────────
     task.spawn(function()
         while ScreenGui.Parent do
-            task.wait(0.25)
+            task.wait(0.2)
 
+            -- Dot color
             if Config.Enabled and CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
-                StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage
-                    and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(255, 200, 50)
+                StatusDot.BackgroundColor3 = CombatTracker.HasDealtDamage and C.Danger or C.Warning
             elseif Config.Enabled then
-                StatusDot.BackgroundColor3 = Color3.fromRGB(80, 160, 255)
+                StatusDot.BackgroundColor3 = C.AccentB
             else
-                StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+                StatusDot.BackgroundColor3 = Color3.fromRGB(70, 70, 80)
             end
 
+            -- Mini label
             if not Config.Enabled then
-                MiniLabel.Text = "NONTK | IDLE"
+                MiniLabel.Text = "NONTK v82 | IDLE"
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
                 local hp, maxHp = GetPlayerHealth(CurrentTarget)
-                MiniLabel.Text = string.format("🥊 %s | %d/%d HP", CurrentTarget.Name, hp, maxHp)
+                MiniLabel.Text = string.format("⚔ %s | %d/%d HP", CurrentTarget.Name, hp, maxHp)
             else
-                MiniLabel.Text = "🔍 NONTK Hunting... | " .. Config.FlySpeed .. " s/s"
+                MiniLabel.Text = string.format("🔍 HUNTING... | %dstuds/s", Config.FlySpeed)
             end
 
+            -- Player buttons
             for p, btn in pairs(PlayerButtons) do
-                if p and p.Parent then
-                    local lvl       = GetPlayerLevel(p)
-                    local hp, maxHp = GetPlayerHealth(p)
-                    local dist      = GetDistanceToPlayer(p)
-                    local pvp       = IsPvPActive(p) and "ON" or "OFF"
-                    btn.Text = string.format(
-                        "  PvP:%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
-                    btn.BackgroundColor3 = (Config.SelectedPlayer == p)
-                        and Color3.fromRGB(40, 120, 70) or Color3.fromRGB(22, 22, 32)
-                end
+                pcall(function()
+                    if p and p.Parent then
+                        local lvl = GetPlayerLevel(p)
+                        local hp, maxHp = GetPlayerHealth(p)
+                        local dist = GetDist(p)
+                        local pvp = IsPvPActive(p) and "✅" or "❌"
+                        local isTarget = (p == CurrentTarget or p == Config.SelectedPlayer)
+                        btn.Text = string.format("  PvP%s [%s] Lv.%d | HP:%d/%d | %dstuds", pvp, p.Name, lvl, hp, maxHp, dist)
+                        btn.BackgroundColor3 = isTarget and Color3.fromRGB(35, 115, 65) or Color3.fromRGB(18, 18, 28)
+                        btn.TextColor3 = isTarget and Color3.fromRGB(150, 255, 170) or C.Text
+                    end
+                end)
             end
 
-            local nearestP, minD = nil, math.huge
+            -- Radar
+            local nearP, minD = nil, math.huge
             if RootPart then
                 for _, p in ipairs(Players:GetPlayers()) do
                     if p ~= LocalPlayer and p.Character
                         and p.Character:FindFirstChild("HumanoidRootPart")
-                        and p.Character:FindFirstChild("Humanoid") then
-                        if p.Character.Humanoid.Health > 0 and IsPvPActive(p) then
-                            local d = (RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
-                            if d < minD then minD = d; nearestP = p end
-                        end
+                        and p.Character:FindFirstChild("Humanoid")
+                        and p.Character.Humanoid.Health > 0 then
+                        local d = (RootPart.Position - p.Character.HumanoidRootPart.Position).Magnitude
+                        if d < minD then minD = d; nearP = p end
                     end
                 end
             end
-            if nearestP and nearestP.Character and nearestP.Character:FindFirstChild("Humanoid") then
-                local lvl = GetPlayerLevel(nearestP)
-                local hp, maxHp = GetPlayerHealth(nearestP)
-                NearestRadar.Text = string.format(
-                    "Nearest PvP: %s (Lv.%d) | HP:%d/%d | %dstuds",
-                    nearestP.Name, lvl, hp, maxHp, math.floor(minD))
+            if nearP then
+                local lvl = GetPlayerLevel(nearP)
+                local hp, maxHp = GetPlayerHealth(nearP)
+                local pvp = IsPvPActive(nearP) and "PvP✅" or "PvP❌"
+                NearestRadar.Text = string.format("🎯 Nearest %s: %s (Lv.%d) | %d/%d HP | %dstuds",
+                    pvp, nearP.Name, lvl, hp, maxHp, math.floor(minD))
             else
-                NearestRadar.Text = "Nearest: No PvP-enabled players found"
+                NearestRadar.Text = "🎯 Radar: No players nearby"
             end
 
+            -- Status box
             if not Config.Enabled then
                 Status.Text = string.format(
-                    "NONTK IDLE\nSpeed: %d studs/s | Race V3/V4: %s\nMeleeOnly: %s | AimLock: %s\nAutoHunt: %s",
-                    Config.FlySpeed, Config.AutoRace and "ON" or "OFF",
-                    Config.FocusMelee and "ON" or "OFF",
-                    Config.AimLock and "ON" or "OFF", Config.AutoHunt and "ON" or "OFF")
+                    "⏸ IDLE\nSpeed: %d studs/s | Mode: %s\nAntiDie: %s | ESP: %s | Hitbox: %dstuds",
+                    Config.FlySpeed, Config.TargetMode,
+                    Config.AntiDie and "ON" or "OFF",
+                    Config.ESPEnabled and "ON" or "OFF",
+                    Config.HitboxSize)
             elseif CurrentTarget and CurrentTarget.Character and CurrentTarget.Character:FindFirstChild("Humanoid") then
-                local lvl       = GetPlayerLevel(CurrentTarget)
+                local lvl = GetPlayerLevel(CurrentTarget)
                 local hp, maxHp = GetPlayerHealth(CurrentTarget)
-                local dist      = GetDistanceToPlayer(CurrentTarget)
-                local tool      = Character:FindFirstChildOfClass("Tool")
-                local toolName  = tool and tool.Name or "None"
+                local dist = GetDist(CurrentTarget)
+                local state = CombatTracker.HasDealtDamage and "🔴 EXECUTION" or "🟡 APPROACHING"
                 Status.Text = string.format(
-                    "🥊 LOCKED: %s (Lv.%d)\nHP:%d/%d | Dist:%d studs\nMelee: %s | Race V3/V4: %s\nAimLock: %s (%s) | Attack: 100/s",
-                    CurrentTarget.Name, lvl, hp, maxHp, dist, toolName,
-                    Config.AutoRace and "AUTO-ACTIVE" or "OFF",
-                    Config.AimLock and "ON" or "OFF", Config.AimLockTarget)
+                    "⚔ LOCKED: %s (Lv.%d) | %s\nHP: %d/%d | Dist: %dstuds | Speed: %d\nHitbox: %d | SilentAim: %s | Combo: %s",
+                    CurrentTarget.Name, lvl, state, hp, maxHp, dist, Config.FlySpeed,
+                    Config.HitboxSize,
+                    Config.SilentAim and "ON" or "OFF",
+                    Config.InfiniteCombo and "∞" or "OFF")
             else
                 Status.Text = string.format(
-                    "NONTK HUNTING...\nSearching PvP targets (Lv.%d+)\nSpeed: %d studs/s | Race V3/V4: %s",
-                    Config.MinBountyLevel, Config.FlySpeed, Config.AutoRace and "ON" or "OFF")
+                    "🔵 HUNTING... | Lv.%d+ targets\nSpeed: %d studs/s | Mode: %s\nESP: %s | AntiDie: %s | Hitbox: %dstuds",
+                    Config.MinBountyLevel, Config.FlySpeed, Config.TargetMode,
+                    Config.ESPEnabled and "ON" or "OFF",
+                    Config.AntiDie and "ON" or "OFF",
+                    Config.HitboxSize)
             end
         end
     end)
 end
 
 BuildUI()
+print("[NONTK v82 ULTRA] Loaded. 6767")
