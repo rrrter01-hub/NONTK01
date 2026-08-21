@@ -1,18 +1,13 @@
--- [[ NONTK FORENSIC PREDATOR v150 — 100% STABLE & ZERO-FREEZE ]] --
--- Complete Ground-Up Rebuild:
--- 1. Removed dangerous getrawmetatable hooks that caused executor thread deadlocks & UI freezes
--- 2. Direct Network Burst Combat (Reliable 15x Multi-Hit without requiring locked game modules)
--- 3. High-Precision CFrame & Linear Velocity Glue (Zero jitter, Zero camera flip, Zero lag)
--- 4. Safe Cross-Platform Input Handler (Mobile Touch & PC Dragging never freeze)
--- 5. Lightweight Forensic ESP & SafeZone Radar (Constant 60 FPS on Mobile & PC)
+-- [[ NONTK BOUNTY HUNTER v98 — STICKY OVERHEAD & MASTER SPEED ]] --
+-- Cleaned: Island Warp Removed | Sticky Glue Lock | Prediction Overhead Anchor | Fixed FastAttack
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
 local RunService = game:GetService("RunService")
+local VirtualUser = game:GetService("VirtualUser")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
-local TeleportService = game:GetService("TeleportService")
-local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -26,335 +21,504 @@ local IsMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 -- [[ CONFIGURATION ]] --
 local Config = {
     Enabled = false,
-    SelectedPlayer = nil,
-    Spectate = false,
-    FlySpeed = 270,
-    OverheadDistance = 4.5,
+    SelectedPlayer = nil,       -- ผู้เล่นเป้าหมาย (เกาะติดจนกว่าจะตาย หรือกดกดยกเลิกเอง)
+    Spectate = false,           -- Spy Cam ดูกล้องมุมมองเป้าหมาย
+    FlySpeed = 260,             -- ความเร็วพุ่ง/บิน (50 - 350 studs/s)
+    OverheadDistance = 10,      -- ความสูงเหนือหัวเป้าหมาย (studs)
+    PredictionLead = 0.08,      -- ดักทางล่วงหน้าตอนเป้าหมายแดช/วิ่งหนี
     
-    -- GOD COMBAT
-    DamageExploit = true,
-    DamageMultiplier = 15,
-    FastM1 = true,
+    FastAttack = true,
+    AttackRadius = 65,          -- ระยะเริ่มฟัน
     AutoHaki = true,
     AutoKen = true,
     AutoPvP = true,
-    PermaRaceV4 = true,
+    AutoRaceV4 = true,
+    SkillSpam = true,
+    Skills = {"Z", "X", "C", "V"},
+    Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
+    WeaponSwitchDelay = 0.35,
     
-    -- SKILLS & MOVEMENT
-    AutoAimSkills = true,
-    InfiniteGeppo = true,
-    InfiniteSoru = true,
-    AutoServerHop = false,
-    
-    -- DEFENSE
+    -- Godmode / Defense / Anti-Stun
+    GodmodeDefense = true,
     AntiKnockback = true,
     AntiStun = true,
+    AntiRagdoll = true,
+    AutoEscapeLowHP = true,
+    EscapeHPPercent = 20,
     AntiVoid = true,
-    Noclip = true,
     
-    -- VISUALS
+    -- Visuals ESP
     ESPEnabled = true,
-    FilterOnlyAttackable = false
+    ESPChams = true
 }
 
--- Remotes Cache (Safe Resolve)
-local Remotes = ReplicatedStorage:FindFirstChild("Remotes")
-local CommF = Remotes and Remotes:FindFirstChild("CommF_")
+-- Runtime Variables
+local FlightBV = nil
+local FlightBG = nil
+local CombatFramework = nil
+local ActiveController = nil
+local LastWeaponSwitch = 0
+local LastV4Check = 0
+local CurrentWeaponIndex = 1
+local ESPObjects = {}
+local IsEscaping = false
+local RefreshPList = nil
+
+-- Remotes Cache
+local Remotes = ReplicatedStorage:WaitForChild("Remotes", 5)
+local CommF = Remotes and Remotes:WaitForChild("CommF_", 5)
 local NetModule = ReplicatedStorage:FindFirstChild("Modules") and ReplicatedStorage.Modules:FindFirstChild("Net")
 local RegisterAttack = NetModule and (NetModule:FindFirstChild("RegisterAttack") or NetModule:FindFirstChild("RE/RegisterAttack"))
 local RegisterHit = NetModule and (NetModule:FindFirstChild("RegisterHit") or NetModule:FindFirstChild("RE/RegisterHit"))
 
--- Runtime Cache
-local LastV4 = 0
-local LastHaki = 0
-local LastGeppo = 0
-local LastAttack = 0
-local ESPRegistry = {}
-local RefreshPlayerList = nil
-
--- [[ SAFE CORE HELPERS ]] --
-local function GetHRP(char)
+-- [[ HELPER FUNCTIONS ]] --
+local function SafeGetHRP(char)
     if not char then return nil end
     return char:FindFirstChild("HumanoidRootPart") or char:FindFirstChild("UpperTorso") or char:FindFirstChild("Torso")
 end
 
-local function GetPlayerInfo(p)
-    local info = {Level = 0, Bounty = 0, Crew = ""}
-    if not p then return info end
-    
+local function GetPlayerLevel(p)
+    if not p then return 0 end
     local data = p:FindFirstChild("Data")
+    if data and data:FindFirstChild("Level") then return tonumber(data.Level.Value) or 0 end
     local ls = p:FindFirstChild("leaderstats")
-    
-    if data and data:FindFirstChild("Level") then info.Level = tonumber(data.Level.Value) or 0
-    elseif ls and ls:FindFirstChild("Level") then info.Level = tonumber(ls.Level.Value) or 0
-    else info.Level = tonumber(p:GetAttribute("Level")) or 0 end
-    
-    if ls and (ls:FindFirstChild("Bounty/Honor") or ls:FindFirstChild("Bounty")) then
-        local b = ls:FindFirstChild("Bounty/Honor") or ls:FindFirstChild("Bounty")
-        info.Bounty = tonumber(b.Value) or 0
-    elseif data and data:FindFirstChild("Bounty") then
-        info.Bounty = tonumber(data.Bounty.Value) or 0
-    end
-    
-    if data and data:FindFirstChild("Crew") then info.Crew = tostring(data.Crew.Value) end
-    return info
+    if ls and ls:FindFirstChild("Level") then return tonumber(ls.Level.Value) or 0 end
+    local attr = p:GetAttribute("Level")
+    if attr then return tonumber(attr) or 0 end
+    return 0
 end
 
-local function GetPvPState(p)
+local function GetPlayerCrew(p)
+    if not p then return "" end
+    local data = p:FindFirstChild("Data")
+    if data and data:FindFirstChild("Crew") then return tostring(data.Crew.Value) end
+    local attr = p:GetAttribute("Crew")
+    if attr then return tostring(attr) end
+    return ""
+end
+
+local function GetPlayerHealth(p)
+    if p and p.Character then
+        local hum = p.Character:FindFirstChildOfClass("Humanoid")
+        if hum then return math.floor(hum.Health), math.floor(hum.MaxHealth) end
+    end
+    return 0, 0
+end
+
+-- [[ SPECTATE SPY CAM ]] --
+local function UpdateSpectateCamera()
+    if Config.Spectate and Config.SelectedPlayer and Config.SelectedPlayer.Character then
+        local targetHum = Config.SelectedPlayer.Character:FindFirstChildOfClass("Humanoid")
+        if targetHum and targetHum.Health > 0 then
+            if Camera.CameraSubject ~= targetHum then
+                Camera.CameraSubject = targetHum
+            end
+            return
+        end
+    end
+
+    if Character and Character:FindFirstChildOfClass("Humanoid") then
+        if Camera.CameraSubject ~= Character.Humanoid then
+            Camera.CameraSubject = Character.Humanoid
+        end
+    end
+end
+
+-- [[ COMBAT STATE & VALIDATION ]] --
+local function GetPlayerCombatState(p)
     local state = {
-        CanAttack = false,
-        Tag = "[❓ SCANNING]",
-        Reason = "Checking status...",
-        Color = Color3.fromRGB(180, 180, 180),
-        Health = 0,
-        MaxHealth = 0,
-        Level = 0,
-        Distance = 9999
+        IsAttackable = false,
+        Badge = "[❓ UNKNOWN]",
+        Color = Color3.fromRGB(160, 160, 160),
+        Details = { Health = 0, MaxHealth = 0, Level = 0, Distance = 9999 }
     }
-    
+
     if not p or p == LocalPlayer or not p.Parent then
-        state.Tag = "[❌ LEFT]"
-        state.Reason = "Left server"
+        state.Badge = "[❌ LEFT]"
         return state
     end
-    
-    local info = GetPlayerInfo(p)
-    state.Level = info.Level
-    
+
     local char = p.Character
     if not char then
-        state.Tag = "[👻 NO CHAR]"
-        state.Reason = "Character loading"
-        state.Color = Color3.fromRGB(120, 120, 120)
+        state.Badge = "[👻 NO CHAR]"
         return state
     end
-    
-    local hrp = GetHRP(char)
+
+    local hrp = SafeGetHRP(char)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then
-        state.Tag = "[👻 SPAWN]"
-        state.Reason = "Respawning..."
-        state.Color = Color3.fromRGB(120, 120, 120)
+        state.Badge = "[👻 SPAWNING]"
         return state
     end
-    
-    state.Health = math.max(0, math.floor(hum.Health))
-    state.MaxHealth = math.max(1, math.floor(hum.MaxHealth))
-    if RootPart and RootPart.Parent then
-        state.Distance = math.floor((RootPart.Position - hrp.Position).Magnitude)
+
+    state.Details.Health = math.floor(hum.Health)
+    state.Details.MaxHealth = math.floor(hum.MaxHealth)
+    state.Details.Level = GetPlayerLevel(p)
+    if RootPart then
+        state.Details.Distance = math.floor((RootPart.Position - hrp.Position).Magnitude)
     end
-    
-    -- 1. Dead
+
     if hum.Health <= 0 then
-        state.Tag = "[💀 DEAD]"
-        state.Reason = "Dead / Waiting respawn"
-        state.Color = Color3.fromRGB(140, 140, 140)
+        state.Badge = "[💀 DEAD]"
+        state.Color = Color3.fromRGB(130, 130, 130)
         return state
     end
-    
-    -- 2. Shield / Forcefield
-    if char:FindFirstChildOfClass("ForceField") or char:FindFirstChild("SafeZoneShield") or char:FindFirstChild("SpawnShield") then
-        state.Tag = "[✨ IMMUNE]"
-        state.Reason = "Spawn Shield Active"
+
+    if char:FindFirstChildOfClass("ForceField") or char:FindFirstChild("SafeZoneShield") then
+        state.Badge = "[✨ IMMUNE]"
         state.Color = Color3.fromRGB(255, 215, 0)
         return state
     end
-    
-    -- 3. SafeZone
-    if char:FindFirstChild("SafeZone") or char:FindFirstChild("InSafeZone") or p:FindFirstChild("SafeZone") or char:GetAttribute("SafeZone") == true then
-        state.Tag = "[🛡️ SAFEZONE]"
-        state.Reason = "Inside Safe Zone"
-        state.Color = Color3.fromRGB(70, 160, 255)
+
+    local inSafeZone = char:FindFirstChild("SafeZone") ~= nil 
+        or char:FindFirstChild("InSafeZone") ~= nil 
+        or p:FindFirstChild("SafeZone") ~= nil 
+        or char:GetAttribute("SafeZone") == true 
+        or p:GetAttribute("SafeZone") == true
+
+    if inSafeZone then
+        state.Badge = "[🛡️ SAFEZONE]"
+        state.Color = Color3.fromRGB(80, 160, 255)
         return state
     end
-    
-    -- 4. PvP Disabled
-    if char:FindFirstChild("PvPDisabled") or p:FindFirstChild("PvPDisabled") or char:GetAttribute("PvPDisabled") == true then
-        state.Tag = "[🚫 PVP-OFF]"
-        state.Reason = "PvP is Disabled"
-        state.Color = Color3.fromRGB(255, 75, 75)
+
+    local pvpOff = char:FindFirstChild("PvPDisabled") ~= nil 
+        or p:FindFirstChild("PvPDisabled") ~= nil 
+        or char:GetAttribute("PvPDisabled") == true 
+        or p:GetAttribute("PvPDisabled") == true
+
+    if pvpOff then
+        state.Badge = "[🚫 PVP-OFF]"
+        state.Color = Color3.fromRGB(240, 80, 80)
         return state
     end
-    
-    -- 5. Attackable
-    state.CanAttack = true
-    state.Tag = "[⚔️ PVP ON]"
-    state.Reason = "Target Attackable 100%"
+
+    state.IsAttackable = true
+    state.Badge = "[⚔️ READY]"
     state.Color = Color3.fromRGB(0, 255, 130)
     return state
 end
 
--- [[ CAMERA CONTROLLER ]] --
-local function ResetCamera()
-    if Character and Character:FindFirstChildOfClass("Humanoid") then
-        Camera.CameraType = Enum.CameraType.Custom
-        Camera.CameraSubject = Character.Humanoid
-    end
-end
+-- [[ RACE V4 SYSTEM ]] --
+local function TriggerRaceV4()
+    if not Config.AutoRaceV4 or not Character then return end
+    if tick() - LastV4Check < 0.3 then return end
+    LastV4Check = tick()
 
-local function UpdateCameraSubject()
-    if Config.Spectate and Config.SelectedPlayer and Config.SelectedPlayer.Character then
-        local tHum = Config.SelectedPlayer.Character:FindFirstChildOfClass("Humanoid")
-        if tHum and tHum.Health > 0 then
-            Camera.CameraType = Enum.CameraType.Custom
-            Camera.CameraSubject = tHum
-            return
+    pcall(function()
+        local isAwakened = Character:FindFirstChild("RaceTransformed") 
+            or Character:FindFirstChild("RaceAwakening")
+            or Character:FindFirstChild("Awakened")
+            or LocalPlayer:GetAttribute("RaceAwakened") == true
+
+        if not isAwakened then
+            VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.Y, false, game)
+            task.wait(0.02)
+            VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.Y, false, game)
         end
-    end
-    ResetCamera()
-end
-
--- [[ COMBAT ENGINE (DIRECT BURST PACKET) ]] --
-local function AttackTarget(targetHRP)
-    if not targetHRP or not Character or not RootPart then return end
-    
-    -- 1. Fast Tool Click
-    if Config.FastM1 then
-        local tool = Character:FindFirstChildOfClass("Tool")
-        if tool then 
-            pcall(function() tool:Activate() end)
-        end
-    end
-    
-    -- 2. Multi-Hit Packet Burst (Rate-Controlled)
-    if Config.DamageExploit and (tick() - LastAttack >= 0.025) then
-        LastAttack = tick()
-        pcall(function()
-            local hits = {}
-            for _ = 1, Config.DamageMultiplier do
-                table.insert(hits, {targetHRP.Parent, targetHRP})
-            end
-            if RegisterAttack then RegisterAttack:FireServer(0) end
-            if RegisterHit then RegisterHit:FireServer(targetHRP, hits) end
-        end)
-    end
-end
-
--- [[ RACE V4 & BUFF AUTOMATION ]] --
-local function RunBuffs()
-    if not Character then return end
-    
-    -- Race V4 Loop
-    if Config.PermaRaceV4 and (tick() - LastV4 >= 0.25) then
-        LastV4 = tick()
-        pcall(function()
-            local v4Active = Character:FindFirstChild("RaceTransformed") or Character:FindFirstChild("Awakened") or LocalPlayer:GetAttribute("RaceAwakened") == true
-            if not v4Active and CommF then
-                CommF:InvokeServer("RaceV4")
-                CommF:InvokeServer("Awaken")
-            end
-        end)
-    end
-    
-    -- Auto Buso / Ken / PvP
-    if tick() - LastHaki >= 0.5 then
-        LastHaki = tick()
-        pcall(function()
-            if Config.AutoPvP and CommF and Character:FindFirstChild("PvPDisabled") then
-                CommF:InvokeServer("EnablePvp")
-            end
-            if Config.AutoHaki and CommF and not Character:FindFirstChild("HasBuso") then
-                CommF:InvokeServer("Buso")
-            end
-        end)
-    end
-end
-
--- [[ INFINITE GEPPO & SORU ]] --
-UserInputService.JumpRequest:Connect(function()
-    if Config.InfiniteGeppo and Character and Humanoid and Humanoid.Health > 0 then
-        if tick() - LastGeppo >= 0.1 then
-            LastGeppo = tick()
-            Humanoid:ChangeState(Enum.HumanoidStateType.Jumping)
-            pcall(function()
-                if Character:FindFirstChild("Geppo") then Character.Geppo:FireServer() end
-            end)
-        end
-    end
-end)
-
-UserInputService.InputBegan:Connect(function(input, gpe)
-    if gpe then return end
-    if Config.InfiniteSoru and input.KeyCode == Enum.KeyCode.Q and RootPart then
-        pcall(function()
-            if CommF then CommF:InvokeServer("Soru") end
-            RootPart.CFrame = RootPart.CFrame + (RootPart.CFrame.LookVector * 60)
-        end)
-    end
-end)
-
--- [[ SERVER HOP ]] --
-local function ExecuteServerHop()
-    task.spawn(function()
-        pcall(function()
-            local url = string.format("https://games.roblox.com/v1/games/%s/servers/Public?sortOrder=Desc&limit=100", tostring(game.PlaceId))
-            local res = game:HttpGet(url)
-            local parsed = HttpService:JSONDecode(res)
-            if parsed and parsed.data then
-                for _, s in ipairs(parsed.data) do
-                    if s.playing and s.maxPlayers and s.playing < s.maxPlayers and s.id ~= game.JobId then
-                        TeleportService:TeleportToPlaceInstance(game.PlaceId, s.id, LocalPlayer)
-                        break
-                    end
-                end
-            end
-        end)
     end)
 end
 
--- [[ CHARACTER HANDLER ]] --
-local function SetupCharacter(char)
+-- [[ GODMODE / ANTI-STUN ENGINE ]] --
+local function ApplyGodmodeDefense()
+    if not Character or not Humanoid or not RootPart then return end
+    
+    if Config.AntiStun or Config.AntiRagdoll then
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
+        Humanoid:SetStateEnabled(Enum.HumanoidStateType.PlatformStanding, false)
+        Humanoid.PlatformStand = false
+        if Humanoid.Sit then Humanoid.Sit = false end
+    end
+
+    if Config.AntiKnockback and RootPart then
+        local vel = RootPart.AssemblyLinearVelocity
+        if vel.Magnitude > 220 then
+            RootPart.AssemblyLinearVelocity = Vector3.zero
+            RootPart.AssemblyAngularVelocity = Vector3.zero
+        end
+    end
+
+    if Config.AntiVoid and RootPart.Position.Y < -30 then
+        RootPart.CFrame = CFrame.new(RootPart.Position.X, 120, RootPart.Position.Z)
+        RootPart.AssemblyLinearVelocity = Vector3.zero
+    end
+
+    if Config.AutoEscapeLowHP and Humanoid.Health > 0 then
+        local hpPct = (Humanoid.Health / math.max(1, Humanoid.MaxHealth)) * 100
+        if hpPct <= Config.EscapeHPPercent then
+            IsEscaping = true
+            if FlightBV then
+                FlightBV.Velocity = Vector3.new(0, 240, 0)
+            else
+                RootPart.CFrame = RootPart.CFrame + Vector3.new(0, 20, 0)
+            end
+        else
+            IsEscaping = false
+        end
+    else
+        IsEscaping = false
+    end
+end
+
+-- [[ STICKY OVERHEAD FLIGHT PHYSICS ]] --
+local function SetupFlightPhysics()
+    if not RootPart then return end
+    
+    if not FlightBV or FlightBV.Parent ~= RootPart then
+        if FlightBV then FlightBV:Destroy() end
+        FlightBV = Instance.new("BodyVelocity")
+        FlightBV.Name = "NONTK_StickyVel"
+        FlightBV.Velocity = Vector3.zero
+        FlightBV.MaxForce = Vector3.new(1e8, 1e8, 1e8)
+        FlightBV.P = 10000
+        FlightBV.Parent = RootPart
+    end
+
+    if not FlightBG or FlightBG.Parent ~= RootPart then
+        if FlightBG then FlightBG:Destroy() end
+        FlightBG = Instance.new("BodyGyro")
+        FlightBG.Name = "NONTK_StickyGyro"
+        FlightBG.MaxTorque = Vector3.new(1e8, 1e8, 1e8)
+        FlightBG.P = 10000
+        FlightBG.D = 25
+        FlightBG.CFrame = RootPart.CFrame
+        FlightBG.Parent = RootPart
+    end
+end
+
+local function ClearFlightPhysics()
+    if FlightBV then FlightBV:Destroy(); FlightBV = nil end
+    if FlightBG then FlightBG:Destroy(); FlightBG = nil end
+    if Humanoid then Humanoid.PlatformStand = false end
+end
+
+-- Noclip Execution
+RunService.Stepped:Connect(function()
+    if (Config.Enabled or Config.GodmodeDefense) and Character then
+        for _, part in ipairs(Character:GetDescendants()) do
+            if part:IsA("BasePart") then
+                part.CanCollide = false
+            end
+        end
+    end
+end)
+
+-- [[ PREDICTIVE OVERHEAD GLUE ]] --
+local function StickyGlueToTarget(targetHRP)
+    SetupFlightPhysics()
+    if not FlightBV or not FlightBG or not RootPart or not targetHRP then return end
+    
+    -- คำนวณความเร็วเป้าหมายเพื่อดักหน้าล่วงหน้า (กันหลุดเวลาศัตรูพุ่ง/สปีด)
+    local targetVel = targetHRP.AssemblyLinearVelocity or Vector3.zero
+    local predictedPos = targetHRP.Position + (targetVel * Config.PredictionLead)
+    local targetHeadPos = predictedPos + Vector3.new(0, Config.OverheadDistance, 0)
+    
+    local curPos = RootPart.Position
+    local delta = targetHeadPos - curPos
+    local dist = delta.Magnitude
+
+    -- หันหน้าตรงเล็งลงกลางตัวเป้าหมาย 100% ตลอดเวลา
+    local aimLook = CFrame.lookAt(curPos, targetHRP.Position)
+    FlightBG.CFrame = aimLook
+
+    if dist > 8 then
+        local flySpeed = Config.FlySpeed
+        FlightBV.Velocity = delta.Unit * flySpeed
+    else
+        -- เกาะติดหนึบ ล็อคความเร็วนิ่งตรงหัว
+        FlightBV.Velocity = targetVel
+        RootPart.AssemblyLinearVelocity = Vector3.zero
+        RootPart.AssemblyAngularVelocity = Vector3.zero
+        RootPart.CFrame = CFrame.new(targetHeadPos, targetHRP.Position)
+    end
+end
+
+-- [[ COMBAT FRAMEWORK HOOKS ]] --
+local function SetupCombatHooks()
+    pcall(function()
+        local ps = LocalPlayer:FindFirstChild("PlayerScripts")
+        if ps and ps:FindFirstChild("CombatFramework") then
+            CombatFramework = require(ps.CombatFramework)
+            ActiveController = CombatFramework.activeController
+        end
+    end)
+end
+SetupCombatHooks()
+
+LocalPlayer.CharacterAdded:Connect(function(char)
     Character = char
     RootPart = char:WaitForChild("HumanoidRootPart")
     Humanoid = char:WaitForChild("Humanoid")
-    ResetCamera()
+    task.wait(0.25)
+    SetupFlightPhysics()
+    SetupCombatHooks()
+end)
+
+-- [[ ATTACK & SKILL ENGINE ]] --
+local function EnsureBuffs()
+    if not Character then return end
+    pcall(function()
+        if Config.AutoPvP and CommF then
+            if Character:FindFirstChild("PvPDisabled") then CommF:InvokeServer("EnablePvp") end
+        end
+        if Config.AutoHaki and CommF then
+            if not Character:FindFirstChild("HasBuso") then CommF:InvokeServer("Buso") end
+        end
+        if Config.AutoKen then
+            local kenActive = LocalPlayer:GetAttribute("KenActive") or Character:FindFirstChild("KenHaki")
+            if not kenActive then
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                task.wait(0.015)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            end
+        end
+    end)
 end
 
-LocalPlayer.CharacterAdded:Connect(SetupCharacter)
+local function SwitchWeapon()
+    local backpack = LocalPlayer:FindFirstChild("Backpack")
+    if not backpack or not Character or not Humanoid then return end
+    local category = Config.Weapons[CurrentWeaponIndex]
+    
+    for _, tool in ipairs(backpack:GetChildren()) do
+        if tool:IsA("Tool") then
+            local tType = tool:GetAttribute("WeaponType") or tool.ToolTip
+            if tType == category or tool.Name:lower():find(category:lower()) or (category == "Melee" and tool:FindFirstChild("CombatScript")) then
+                Humanoid:EquipTool(tool)
+                break
+            end
+        end
+    end
+    CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
+end
 
--- [[ ESP RENDERER ]] --
+local function ExecuteFastAttack(targetHRP)
+    if not Config.FastAttack or not targetHRP then return end
+    
+    pcall(function()
+        if not ActiveController then SetupCombatHooks() end
+        if ActiveController then
+            ActiveController.timeToNextAttack = 0
+            ActiveController.attacking = false
+            ActiveController.blocking = false
+            ActiveController.hitboxMagnitude = 160
+            ActiveController.increment = 3
+            if ActiveController.attack then ActiveController:attack() end
+            if ActiveController.bladeHit then ActiveController.bladeHit(targetHRP, {targetHRP}) end
+        end
+    end)
+    
+    pcall(function()
+        if RegisterAttack then RegisterAttack:FireServer(0) end
+        if RegisterHit then RegisterHit:FireServer(targetHRP, {{targetHRP.Parent, targetHRP}}) end
+    end)
+    
+    local tool = Character:FindFirstChildOfClass("Tool")
+    if tool then tool:Activate() end
+    VirtualUser:CaptureController()
+    VirtualUser:Button1Down(Vector2.new(0, 0))
+    VirtualUser:Button1Up(Vector2.new(0, 0))
+end
+
+local function CastSkills(targetHRP, targetHum)
+    if not Config.SkillSpam or not targetHRP or targetHum.Health <= 0 then return end
+    
+    -- ล็อคมุมกล้องเล็งใส่ตัวเป้าหมายเพื่อให้สกิลยิงโดนแน่นอน
+    pcall(function()
+        Camera.CFrame = CFrame.lookAt(Camera.CFrame.Position, targetHRP.Position)
+    end)
+    
+    for _, key in ipairs(Config.Skills) do
+        if not Config.SelectedPlayer or targetHum.Health <= 0 then break end
+        VirtualInputManager:SendKeyEvent(true, Enum.KeyCode[key], false, game)
+        task.wait(0.018)
+        VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
+        task.wait(0.02)
+    end
+end
+
+-- [[ UNIVERSAL ESP SYSTEM ]] --
 local function CreateESP(player)
     if player == LocalPlayer then return end
-    
-    local bg = Instance.new("BillboardGui")
-    bg.Name = "NONTK_ESP"
-    bg.Size = UDim2.new(0, 150, 0, 42)
-    bg.StudsOffset = Vector3.new(0, 3.2, 0)
-    bg.AlwaysOnTop = true
-    bg.MaxDistance = 4000
-    
-    local nameLbl = Instance.new("TextLabel", bg)
-    nameLbl.Size = UDim2.new(1, 0, 0, 14)
-    nameLbl.BackgroundTransparency = 1
-    nameLbl.TextColor3 = Color3.fromRGB(255, 255, 255)
-    nameLbl.Font = Enum.Font.GothamBold
-    nameLbl.TextSize = 10.5
-    nameLbl.TextStrokeTransparency = 0.2
-    
-    local statusLbl = Instance.new("TextLabel", bg)
-    statusLbl.Size = UDim2.new(1, 0, 0, 12)
-    statusLbl.Position = UDim2.new(0, 0, 0, 14)
-    statusLbl.BackgroundTransparency = 1
-    statusLbl.Font = Enum.Font.GothamBold
-    statusLbl.TextSize = 9.5
-    statusLbl.TextStrokeTransparency = 0.2
-    
-    local distLbl = Instance.new("TextLabel", bg)
-    distLbl.Size = UDim2.new(1, 0, 0, 12)
-    distLbl.Position = UDim2.new(0, 0, 0, 26)
-    distLbl.BackgroundTransparency = 1
-    distLbl.TextColor3 = Color3.fromRGB(200, 230, 255)
-    distLbl.Font = Enum.Font.Gotham
-    distLbl.TextSize = 9
-    distLbl.TextStrokeTransparency = 0.2
-    
-    ESPRegistry[player] = {Gui = bg, Name = nameLbl, Status = statusLbl, Dist = distLbl}
+
+    local esp = {
+        Player = player,
+        Highlight = Instance.new("Highlight"),
+        Billboard = Instance.new("BillboardGui"),
+        NameLabel = Instance.new("TextLabel"),
+        StatusLabel = Instance.new("TextLabel"),
+        DistLabel = Instance.new("TextLabel"),
+        HPBarBg = Instance.new("Frame"),
+        HPBar = Instance.new("Frame")
+    }
+
+    esp.Highlight.Name = "NONTK_ESP_" .. player.Name
+    esp.Highlight.FillTransparency = 0.5
+    esp.Highlight.OutlineTransparency = 0
+    esp.Highlight.FillColor = Color3.fromRGB(0, 255, 150)
+    esp.Highlight.OutlineColor = Color3.fromRGB(255, 255, 255)
+    esp.Highlight.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+    pcall(function()
+        local core = game:GetService("CoreGui")
+        esp.Highlight.Parent = core
+    end)
+
+    esp.Billboard.Name = "NONTK_Board"
+    esp.Billboard.Size = UDim2.new(0, 160, 0, 52)
+    esp.Billboard.StudsOffset = Vector3.new(0, 3.5, 0)
+    esp.Billboard.AlwaysOnTop = true
+    esp.Billboard.MaxDistance = 6000
+
+    esp.NameLabel.Size = UDim2.new(1, 0, 0, 13)
+    esp.NameLabel.Position = UDim2.new(0, 0, 0, 0)
+    esp.NameLabel.BackgroundTransparency = 1
+    esp.NameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+    esp.NameLabel.Font = Enum.Font.GothamBold
+    esp.NameLabel.TextSize = 11
+    esp.NameLabel.TextStrokeTransparency = 0
+    esp.NameLabel.Parent = esp.Billboard
+
+    esp.StatusLabel.Size = UDim2.new(1, 0, 0, 12)
+    esp.StatusLabel.Position = UDim2.new(0, 0, 0, 13)
+    esp.StatusLabel.BackgroundTransparency = 1
+    esp.StatusLabel.Font = Enum.Font.GothamBold
+    esp.StatusLabel.TextSize = 9.5
+    esp.StatusLabel.TextStrokeTransparency = 0
+    esp.StatusLabel.Parent = esp.Billboard
+
+    esp.DistLabel.Size = UDim2.new(1, 0, 0, 11)
+    esp.DistLabel.Position = UDim2.new(0, 0, 0, 25)
+    esp.DistLabel.BackgroundTransparency = 1
+    esp.DistLabel.TextColor3 = Color3.fromRGB(210, 235, 255)
+    esp.DistLabel.Font = Enum.Font.Gotham
+    esp.DistLabel.TextSize = 9.5
+    esp.DistLabel.TextStrokeTransparency = 0
+    esp.DistLabel.Parent = esp.Billboard
+
+    esp.HPBarBg.Size = UDim2.new(0.85, 0, 0, 4)
+    esp.HPBarBg.Position = UDim2.new(0.075, 0, 0, 40)
+    esp.HPBarBg.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
+    esp.HPBarBg.BorderSizePixel = 0
+    Instance.new("UICorner", esp.HPBarBg).CornerRadius = UDim.new(1, 0)
+    esp.HPBarBg.Parent = esp.Billboard
+
+    esp.HPBar.Size = UDim2.new(1, 0, 1, 0)
+    esp.HPBar.BackgroundColor3 = Color3.fromRGB(0, 255, 120)
+    esp.HPBar.BorderSizePixel = 0
+    Instance.new("UICorner", esp.HPBar).CornerRadius = UDim.new(1, 0)
+    esp.HPBar.Parent = esp.HPBarBg
+
+    ESPObjects[player] = esp
 end
 
 local function RemoveESP(player)
-    if ESPRegistry[player] then
-        pcall(function() ESPRegistry[player].Gui:Destroy() end)
-        ESPRegistry[player] = nil
+    if ESPObjects[player] then
+        pcall(function()
+            if ESPObjects[player].Highlight then ESPObjects[player].Highlight:Destroy() end
+            if ESPObjects[player].Billboard then ESPObjects[player].Billboard:Destroy() end
+        end)
+        ESPObjects[player] = nil
     end
 end
 
@@ -363,136 +527,118 @@ Players.PlayerAdded:Connect(CreateESP)
 Players.PlayerRemoving:Connect(RemoveESP)
 
 RunService.RenderStepped:Connect(function()
-    if not Config.ESPEnabled then
-        for _, esp in pairs(ESPRegistry) do esp.Gui.Enabled = false end
-        return
-    end
-    
-    for p, esp in pairs(ESPRegistry) do
-        if p and p.Parent and p.Character and p.Character:FindFirstChild("HumanoidRootPart") then
-            local hrp = p.Character.HumanoidRootPart
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            if hum and hum.Health > 0 then
-                local st = GetPvPState(p)
-                local isTarget = (p == Config.SelectedPlayer)
-                
-                if esp.Gui.Adornee ~= hrp then esp.Gui.Adornee = hrp end
-                if esp.Gui.Parent ~= p.Character then esp.Gui.Parent = p.Character end
-                esp.Gui.Enabled = true
-                
-                esp.Name.Text = string.format("%s [Lv.%d]", p.Name, st.Level)
-                esp.Status.Text = isTarget and "[🎯 LOCKED TARGET]" or st.Tag
-                esp.Status.TextColor3 = isTarget and Color3.fromRGB(255, 30, 30) or st.Color
-                esp.Dist.Text = string.format("%d studs | HP: %d/%d", st.Distance, st.Health, st.MaxHealth)
+    UpdateSpectateCamera()
+
+    for p, esp in pairs(ESPObjects) do
+        if p and p.Character and p.Character:FindFirstChild("HumanoidRootPart") and p.Character:FindFirstChildOfClass("Humanoid") then
+            local char = p.Character
+            local hrp = char.HumanoidRootPart
+            local hum = char:FindFirstChildOfClass("Humanoid")
+            local st = GetPlayerCombatState(p)
+            local isTarget = (p == Config.SelectedPlayer)
+
+            if Config.ESPEnabled and hum.Health > 0 then
+                if esp.Billboard.Adornee ~= hrp then esp.Billboard.Adornee = hrp end
+                if esp.Billboard.Parent ~= char then esp.Billboard.Parent = char end
+                if esp.Highlight.Adornee ~= char then esp.Highlight.Adornee = char end
+
+                local renderColor = isTarget and Color3.fromRGB(255, 35, 35) or st.Color
+                esp.Highlight.Enabled = Config.ESPChams
+                esp.Highlight.FillColor = renderColor
+                esp.Billboard.Enabled = true
+
+                esp.NameLabel.Text = string.format("%s [Lv.%d]", p.Name, st.Details.Level)
+                esp.StatusLabel.Text = isTarget and "[🎯 LOCKED TARGET]" or st.Badge
+                esp.StatusLabel.TextColor3 = renderColor
+                esp.DistLabel.Text = string.format("%d studs | HP: %d/%d", st.Details.Distance, st.Details.Health, st.Details.MaxHealth)
+
+                local hpPct = math.clamp(hum.Health / math.max(1, hum.MaxHealth), 0, 1)
+                esp.HPBar.Size = UDim2.new(hpPct, 0, 1, 0)
+                esp.HPBar.BackgroundColor3 = Color3.fromHSV(hpPct * 0.35, 0.9, 1)
             else
-                esp.Gui.Enabled = false
+                esp.Billboard.Enabled = false
+                esp.Highlight.Enabled = false
             end
         else
-            esp.Gui.Enabled = false
+            esp.Billboard.Enabled = false
+            esp.Highlight.Enabled = false
         end
     end
 end)
 
--- [[ MAIN COMBAT & MOVEMENT LOOP ]] --
+-- [[ MAIN COMBAT LOOP (STICKY NEVER-DROP LOCK) ]] --
 RunService.Heartbeat:Connect(function()
-    -- Defense Matrix
-    if Config.Noclip and Character then
-        for _, part in ipairs(Character:GetDescendants()) do
-            if part:IsA("BasePart") and part.CanCollide then
-                part.CanCollide = false
-            end
-        end
+    ApplyGodmodeDefense()
+
+    if not Config.Enabled or not RootPart or IsEscaping then 
+        ClearFlightPhysics()
+        return 
     end
-    
-    if Config.AntiStun and Humanoid then
-        Humanoid:SetStateEnabled(Enum.HumanoidStateType.Ragdoll, false)
-        Humanoid:SetStateEnabled(Enum.HumanoidStateType.FallingDown, false)
-        if Humanoid.Sit then Humanoid.Sit = false end
-    end
-    
-    if Config.AntiKnockback and RootPart and RootPart.AssemblyLinearVelocity.Magnitude > 220 then
-        RootPart.AssemblyLinearVelocity = Vector3.zero
-        RootPart.AssemblyAngularVelocity = Vector3.zero
-    end
-    
-    if Config.AntiVoid and RootPart and RootPart.Position.Y < -30 then
-        RootPart.CFrame = CFrame.new(RootPart.Position.X, 120, RootPart.Position.Z)
-        RootPart.AssemblyLinearVelocity = Vector3.zero
-    end
-    
-    RunBuffs()
-    
-    -- Target Tracking & Overhead Lock
-    if not Config.Enabled or not RootPart then return end
-    
+
+    EnsureBuffs()
+
     local target = Config.SelectedPlayer
     if target and target.Parent and target.Character then
-        local tHRP = GetHRP(target.Character)
+        local tHRP = SafeGetHRP(target.Character)
         local tHum = target.Character:FindFirstChildOfClass("Humanoid")
-        
-        if not tHRP or not tHum or tHum.Health <= 0 then
+
+        -- ถ้าตายจริง หรือหลุดเซิร์ฟเวอร์ ถึงจะปลดล็อค (ไม่หลุดจาก Safezone ชั่วคราว)
+        if not tHum or tHum.Health <= 0 or not tHRP then
             Config.SelectedPlayer = nil
-            ResetCamera()
-            if RefreshPlayerList then RefreshPlayerList() end
-            if Config.AutoServerHop then
-                task.wait(0.5)
-                ExecuteServerHop()
-            end
+            ClearFlightPhysics()
+            if RefreshPList then RefreshPList() end
             return
         end
+
+        -- เกาะติดหนึบเหนือหัวเป้าหมายตลอดเวลา
+        StickyGlueToTarget(tHRP)
         
-        -- Smooth Vector Glue (Zero Physics Fight)
-        local tPos = tHRP.Position
-        local tVel = tHRP.AssemblyLinearVelocity
-        local overheadPos = tPos + Vector3.new(0, Config.OverheadDistance, 0)
-        local curPos = RootPart.Position
-        local delta = overheadPos - curPos
-        local dist = delta.Magnitude
-        
-        local lookCF = CFrame.lookAt(curPos, Vector3.new(tPos.X, curPos.Y, tPos.Z))
-        
-        if dist > 8 then
-            RootPart.AssemblyLinearVelocity = delta.Unit * Config.FlySpeed
-            RootPart.CFrame = lookCF
-        else
-            RootPart.AssemblyLinearVelocity = tVel
-            RootPart.AssemblyAngularVelocity = Vector3.zero
-            RootPart.CFrame = RootPart.CFrame:Lerp(CFrame.new(overheadPos, Vector3.new(tPos.X, overheadPos.Y, tPos.Z)), 0.3)
-            
-            -- Trigger Burst Damage
-            AttackTarget(tHRP)
+        local dist = (RootPart.Position - tHRP.Position).Magnitude
+        if dist <= Config.AttackRadius then
+            TriggerRaceV4()
+
+            -- สลับอาวุธวนตามลำดับ Melee -> Sword -> Fruit -> Gun
+            if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
+                SwitchWeapon()
+                LastWeaponSwitch = tick()
+            end
+
+            ExecuteFastAttack(tHRP)
+            CastSkills(tHRP, tHum)
         end
     else
+        ClearFlightPhysics()
         Config.SelectedPlayer = nil
     end
 end)
 
--- [[ SAFE TOUCH & MOUSE DRAGGING ]] --
-local function MakeDraggable(gui, handle)
-    handle = handle or gui
-    local dragging = false
-    local dragStart, startPos
-    
-    handle.InputBegan:Connect(function(input)
+-- [[ DRAG HELPER ]] --
+local function EnableUniversalDrag(frame, dragHandle)
+    dragHandle = dragHandle or frame
+    local dragging, dragInput, dragStart, startPos
+
+    dragHandle.InputBegan:Connect(function(input)
         if input.UserInputType == Enum.UserInputType.MouseButton1 or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             dragStart = input.Position
-            startPos = gui.Position
-            
-            local connection
-            connection = input.Changed:Connect(function()
-                if input.UserInputState == Enum.UserInputState.End then
-                    dragging = false
-                    connection:Disconnect()
-                end
+            startPos = frame.Position
+
+            input.Changed:Connect(function()
+                if input.UserInputState == Enum.UserInputState.End then dragging = false end
             end)
         end
     end)
-    
+
+    dragHandle.InputChanged:Connect(function(input)
+        if input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch then
+            dragInput = input
+        end
+    end)
+
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement or input.UserInputType == Enum.UserInputType.Touch) then
+        if input == dragInput and dragging then
             local delta = input.Position - dragStart
-            gui.Position = UDim2.new(
+            frame.Position = UDim2.new(
                 startPos.X.Scale,
                 startPos.X.Offset + delta.X,
                 startPos.Y.Scale,
@@ -502,276 +648,533 @@ local function MakeDraggable(gui, handle)
     end)
 end
 
--- [[ CLEAN USER INTERFACE ]] --
-local function BuildGUI()
-    local pGui = (gethui and gethui()) or LocalPlayer:WaitForChild("PlayerGui")
-    local sg = Instance.new("ScreenGui")
-    sg.Name = "NONTK_V150_GUI"
-    sg.ResetOnSpawn = false
-    sg.Parent = pGui
+-- [[ UI SYSTEM ]] --
+local function BuildUI()
+    local ScreenGui = Instance.new("ScreenGui")
+    ScreenGui.Name = "NONTK_V98_STICKY"
+    ScreenGui.ResetOnSpawn = false
     
-    -- FAB Button
-    local FAB = Instance.new("TextButton", sg)
-    FAB.Size = UDim2.new(0, 44, 0, 44)
-    FAB.Position = UDim2.new(0.04, 0, 0.22, 0)
-    FAB.BackgroundColor3 = Color3.fromRGB(15, 25, 35)
-    FAB.TextColor3 = Color3.fromRGB(0, 255, 140)
-    FAB.Font = Enum.Font.GothamBold
-    FAB.TextSize = 18
-    FAB.Text = "⚡"
-    Instance.new("UICorner", FAB).CornerRadius = UDim.new(1, 0)
-    local fabStroke = Instance.new("UIStroke", FAB)
-    fabStroke.Color = Color3.fromRGB(0, 220, 140)
-    fabStroke.Thickness = 1.8
-    MakeDraggable(FAB)
-    
-    -- Mini Header Bar
-    local MiniBar = Instance.new("Frame", sg)
-    MiniBar.Size = UDim2.new(0, 270, 0, 34)
-    MiniBar.Position = UDim2.new(0.5, -135, 0.01, 0)
-    MiniBar.BackgroundColor3 = Color3.fromRGB(12, 16, 22)
-    Instance.new("UICorner", MiniBar).CornerRadius = UDim.new(0, 8)
-    local mbStroke = Instance.new("UIStroke", MiniBar)
-    mbStroke.Color = Color3.fromRGB(0, 200, 130)
-    mbStroke.Thickness = 1.2
-    MakeDraggable(MiniBar)
-    
-    local MiniDot = Instance.new("Frame", MiniBar)
-    MiniDot.Size = UDim2.new(0, 8, 0, 8)
-    MiniDot.Position = UDim2.new(0, 10, 0.5, -4)
-    MiniDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-    Instance.new("UICorner", MiniDot).CornerRadius = UDim.new(1, 0)
-    
-    local MiniText = Instance.new("TextLabel", MiniBar)
-    MiniText.Size = UDim2.new(1, -70, 1, 0)
-    MiniText.Position = UDim2.new(0, 24, 0, 0)
-    MiniText.BackgroundTransparency = 1
-    MiniText.TextColor3 = Color3.fromRGB(220, 245, 255)
-    MiniText.Font = Enum.Font.GothamBold
-    MiniText.TextSize = 10.5
-    MiniText.TextXAlignment = Enum.TextXAlignment.Left
-    MiniText.Text = "FORENSIC v150 | IDLE"
-    
-    local HubBtn = Instance.new("TextButton", MiniBar)
-    HubBtn.Size = UDim2.new(0, 48, 1, -6)
-    HubBtn.Position = UDim2.new(1, -52, 0, 3)
-    HubBtn.BackgroundColor3 = Color3.fromRGB(20, 40, 50)
-    HubBtn.TextColor3 = Color3.fromRGB(140, 240, 190)
-    HubBtn.Font = Enum.Font.GothamBold
-    HubBtn.TextSize = 10
-    HubBtn.Text = "HUB"
-    Instance.new("UICorner", HubBtn).CornerRadius = UDim.new(0, 5)
-    
+    local parentGui = (gethui and gethui()) or (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or LocalPlayer:WaitForChild("PlayerGui")
+    ScreenGui.Parent = parentGui
+
+    -- Mobile Float Button
+    local MobileFAB = Instance.new("ImageButton", ScreenGui)
+    MobileFAB.Size = UDim2.new(0, 48, 0, 48)
+    MobileFAB.Position = UDim2.new(0.04, 0, 0.25, 0)
+    MobileFAB.BackgroundColor3 = Color3.fromRGB(15, 25, 35)
+    MobileFAB.BorderSizePixel = 0
+    MobileFAB.Image = "rbxassetid://6031075938"
+    MobileFAB.ImageColor3 = Color3.fromRGB(0, 240, 160)
+    Instance.new("UICorner", MobileFAB).CornerRadius = UDim.new(1, 0)
+    local FABStroke = Instance.new("UIStroke", MobileFAB)
+    FABStroke.Color = Color3.fromRGB(0, 220, 140)
+    FABStroke.Thickness = 2
+    EnableUniversalDrag(MobileFAB)
+
+    -- Top Mini Pill
+    local MiniBar = Instance.new("Frame", ScreenGui)
+    MiniBar.Size = UDim2.new(0, 260, 0, 36)
+    MiniBar.Position = UDim2.new(0.5, -130, 0.0, 12)
+    MiniBar.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
+    MiniBar.BorderSizePixel = 0
+    Instance.new("UICorner", MiniBar).CornerRadius = UDim.new(0, 9)
+    local MiniStroke = Instance.new("UIStroke", MiniBar)
+    MiniStroke.Color = Color3.fromRGB(0, 230, 140)
+    MiniStroke.Thickness = 1.4
+    EnableUniversalDrag(MiniBar)
+
+    local StatusDot = Instance.new("Frame", MiniBar)
+    StatusDot.Size = UDim2.new(0, 10, 0, 10)
+    StatusDot.Position = UDim2.new(0, 10, 0.5, -5)
+    StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+    Instance.new("UICorner", StatusDot).CornerRadius = UDim.new(1, 0)
+
+    local MiniLabel = Instance.new("TextLabel", MiniBar)
+    MiniLabel.Size = UDim2.new(1, -74, 1, 0)
+    MiniLabel.Position = UDim2.new(0, 28, 0, 0)
+    MiniLabel.BackgroundTransparency = 1
+    MiniLabel.TextColor3 = Color3.fromRGB(220, 240, 255)
+    MiniLabel.Font = Enum.Font.GothamBold
+    MiniLabel.TextSize = 11
+    MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
+    MiniLabel.Text = "NONTK v98 | NO TARGET"
+
+    local OpenBtn = Instance.new("TextButton", MiniBar)
+    OpenBtn.Size = UDim2.new(0, 52, 1, -8)
+    OpenBtn.Position = UDim2.new(1, -58, 0, 4)
+    OpenBtn.BackgroundColor3 = Color3.fromRGB(18, 38, 48)
+    OpenBtn.TextColor3 = Color3.fromRGB(140, 240, 190)
+    OpenBtn.Font = Enum.Font.GothamBold
+    OpenBtn.TextSize = 11
+    OpenBtn.Text = "▼ HUB"
+    Instance.new("UICorner", OpenBtn).CornerRadius = UDim.new(0, 6)
+
     -- Main Window
-    local Main = Instance.new("Frame", sg)
-    Main.Size = UDim2.new(0, IsMobile and 340 or 420, 0, IsMobile and 480 or 540)
-    Main.Position = UDim2.new(0.5, IsMobile and -170 or -210, 0.08, 0)
-    Main.BackgroundColor3 = Color3.fromRGB(10, 14, 18)
+    local Main = Instance.new("Frame", ScreenGui)
+    Main.Size = UDim2.new(0, IsMobile and 360 or 440, 0, IsMobile and 520 or 580)
+    Main.Position = UDim2.new(0.5, IsMobile and -180 or -220, 0.05, 0)
+    Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
+    Main.BorderSizePixel = 0
     Main.Visible = false
-    Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 10)
-    local mainStroke = Instance.new("UIStroke", Main)
-    mainStroke.Color = Color3.fromRGB(0, 200, 130)
-    mainStroke.Thickness = 1.4
-    
+    Instance.new("UICorner", Main).CornerRadius = UDim.new(0, 12)
+    local MainStroke = Instance.new("UIStroke", Main)
+    MainStroke.Color = Color3.fromRGB(0, 190, 130)
+    MainStroke.Thickness = 1.6
+
     local Header = Instance.new("Frame", Main)
-    Header.Size = UDim2.new(1, 0, 0, 40)
-    Header.BackgroundColor3 = Color3.fromRGB(15, 20, 28)
-    Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 10)
-    MakeDraggable(Main, Header)
-    
-    local Title = Instance.new("TextLabel", Header)
-    Title.Size = UDim2.new(1, -40, 1, 0)
-    Title.Position = UDim2.new(0, 12, 0, 0)
-    Title.BackgroundTransparency = 1
-    Title.TextColor3 = Color3.fromRGB(240, 255, 245)
-    Title.Font = Enum.Font.GothamBold
-    Title.TextSize = 11.5
-    Title.TextXAlignment = Enum.TextXAlignment.Left
-    Title.Text = "⚡ NONTK v150 — ZERO FREEZE GOD MATRIX"
-    
-    local Close = Instance.new("TextButton", Header)
-    Close.Size = UDim2.new(0, 26, 0, 24)
-    Close.Position = UDim2.new(1, -32, 0.5, -12)
-    Close.BackgroundColor3 = Color3.fromRGB(180, 40, 50)
-    Close.TextColor3 = Color3.fromRGB(255, 255, 255)
-    Close.Font = Enum.Font.GothamBold
-    Close.TextSize = 11
-    Close.Text = "✕"
-    Instance.new("UICorner", Close).CornerRadius = UDim.new(0, 5)
-    
+    Header.Size = UDim2.new(1, 0, 0, 44)
+    Header.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
+    Header.BorderSizePixel = 0
+    Instance.new("UICorner", Header).CornerRadius = UDim.new(0, 12)
+    EnableUniversalDrag(Main, Header)
+
+    local HeaderTitle = Instance.new("TextLabel", Header)
+    HeaderTitle.Size = UDim2.new(1, -50, 1, 0)
+    HeaderTitle.Position = UDim2.new(0, 14, 0, 0)
+    HeaderTitle.BackgroundTransparency = 1
+    HeaderTitle.TextColor3 = Color3.fromRGB(240, 255, 245)
+    HeaderTitle.Font = Enum.Font.GothamBold
+    HeaderTitle.TextSize = IsMobile and 11.5 or 13
+    HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
+    HeaderTitle.Text = "⚡ NONTK v98 — STICKY OVERHEAD PREDATOR"
+
+    local CloseBtn = Instance.new("TextButton", Header)
+    CloseBtn.Size = UDim2.new(0, 32, 0, 26)
+    CloseBtn.Position = UDim2.new(1, -38, 0.5, -13)
+    CloseBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 50)
+    CloseBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    CloseBtn.Font = Enum.Font.GothamBold
+    CloseBtn.TextSize = 12
+    CloseBtn.Text = "✕"
+    Instance.new("UICorner", CloseBtn).CornerRadius = UDim.new(0, 6)
+
+    local HubVisible = false
     local function ToggleHub()
-        Main.Visible = not Main.Visible
+        HubVisible = not HubVisible
+        Main.Visible = HubVisible
+        OpenBtn.Text = HubVisible and "▲ HUB" or "▼ HUB"
     end
-    HubBtn.MouseButton1Click:Connect(ToggleHub)
-    Close.MouseButton1Click:Connect(ToggleHub)
-    FAB.MouseButton1Click:Connect(ToggleHub)
-    
-    -- Body
-    local Scroll = Instance.new("ScrollingFrame", Main)
-    Scroll.Size = UDim2.new(1, -16, 1, -48)
-    Scroll.Position = UDim2.new(0, 8, 0, 44)
-    Scroll.BackgroundTransparency = 1
-    Scroll.ScrollBarThickness = 3
-    local layout = Instance.new("UIListLayout", Scroll)
-    layout.SortOrder = Enum.SortOrder.LayoutOrder
-    layout.Padding = UDim.new(0, 6)
-    
-    -- Master Toggle
-    local MasterBtn = Instance.new("TextButton", Scroll)
-    MasterBtn.Size = UDim2.new(1, 0, 0, 36)
-    MasterBtn.BackgroundColor3 = Color3.fromRGB(30, 35, 48)
-    MasterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    MasterBtn.Font = Enum.Font.GothamBold
-    MasterBtn.TextSize = 11
-    MasterBtn.Text = "⏸ COMBAT & LOCK: OFF"
-    Instance.new("UICorner", MasterBtn).CornerRadius = UDim.new(0, 6)
-    MasterBtn.MouseButton1Click:Connect(function()
-        Config.Enabled = not Config.Enabled
-        MasterBtn.BackgroundColor3 = Config.Enabled and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(30, 35, 48)
-        MasterBtn.Text = Config.Enabled and "▶ COMBAT & LOCK: ACTIVE" or "⏸ COMBAT & LOCK: OFF"
-        if not Config.Enabled then ResetCamera() end
-    end)
-    
-    -- Target Info Card
-    local Card = Instance.new("TextLabel", Scroll)
-    Card.Size = UDim2.new(1, 0, 0, 54)
-    Card.BackgroundColor3 = Color3.fromRGB(14, 18, 24)
-    Card.TextColor3 = Color3.fromRGB(200, 240, 230)
-    Card.Font = Enum.Font.Gotham
-    Card.TextSize = 9
-    Card.TextWrapped = true
-    Card.Text = "🎯 STATUS RADAR: NO TARGET SELECTED\nClick a player below to inspect PvP / SafeZone status."
-    Instance.new("UICorner", Card).CornerRadius = UDim.new(0, 6)
-    
-    -- Player Selection List
-    local PList = Instance.new("ScrollingFrame", Scroll)
-    PList.Size = UDim2.new(1, 0, 0, 125)
-    PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
-    PList.ScrollBarThickness = 3
-    Instance.new("UICorner", PList).CornerRadius = UDim.new(0, 6)
-    local pLayout = Instance.new("UIListLayout", PList)
-    pLayout.SortOrder = Enum.SortOrder.LayoutOrder
-    pLayout.Padding = UDim.new(0, 3)
-    
-    RefreshPlayerList = function()
-        for _, ch in ipairs(PList:GetChildren()) do
-            if ch:IsA("TextButton") then ch:Destroy() end
+    OpenBtn.MouseButton1Click:Connect(ToggleHub)
+    CloseBtn.MouseButton1Click:Connect(ToggleHub)
+    MobileFAB.MouseButton1Click:Connect(ToggleHub)
+
+    -- Tab Control
+    local TabBar = Instance.new("Frame", Main)
+    TabBar.Size = UDim2.new(1, -20, 0, 32)
+    TabBar.Position = UDim2.new(0, 10, 0, 50)
+    TabBar.BackgroundColor3 = Color3.fromRGB(16, 18, 24)
+    Instance.new("UICorner", TabBar).CornerRadius = UDim.new(0, 7)
+
+    local TabPages = {}
+    local TabButtons = {}
+
+    local function CreateTab(name, icon, posX, sizeX)
+        local btn = Instance.new("TextButton", TabBar)
+        btn.Size = UDim2.new(sizeX, -4, 1, -4)
+        btn.Position = UDim2.new(posX, 2, 0, 2)
+        btn.BackgroundColor3 = Color3.fromRGB(22, 26, 38)
+        btn.TextColor3 = Color3.fromRGB(160, 210, 190)
+        btn.Font = Enum.Font.GothamBold
+        btn.TextSize = IsMobile and 9.5 or 10.5
+        btn.Text = icon .. " " .. name
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+
+        local page = Instance.new("ScrollingFrame", Main)
+        page.Size = UDim2.new(1, -20, 1, -94)
+        page.Position = UDim2.new(0, 10, 0, 88)
+        page.BackgroundTransparency = 1
+        page.BorderSizePixel = 0
+        page.ScrollBarThickness = 3
+        page.Visible = false
+        local layout = Instance.new("UIListLayout", page)
+        layout.SortOrder = Enum.SortOrder.LayoutOrder
+        layout.Padding = UDim.new(0, 6)
+
+        TabPages[name] = page
+        TabButtons[name] = btn
+        return page, btn
+    end
+
+    local LockPage = CreateTab("Sticky Lock & Speed", "🎯", 0.0, 0.5)
+    local ConfigPage = CreateTab("Godmode & Modules", "⚙", 0.5, 0.5)
+
+    local function SwitchTab(tabName)
+        for name, page in pairs(TabPages) do
+            local active = (name == tabName)
+            page.Visible = active
+            TabButtons[name].BackgroundColor3 = active and Color3.fromRGB(0, 160, 100) or Color3.fromRGB(22, 26, 38)
+            TabButtons[name].TextColor3 = active and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(160, 210, 190)
         end
+    end
+
+    for name, btn in pairs(TabButtons) do
+        btn.MouseButton1Click:Connect(function() SwitchTab(name) end)
+    end
+    SwitchTab("Sticky Lock & Speed")
+
+    -- [[ TAB 1: LOCK & PROMINENT SPEED CONTROLLER ]] --
+    local LockMasterToggle = Instance.new("TextButton", LockPage)
+    LockMasterToggle.Size = UDim2.new(1, 0, 0, 38)
+    LockMasterToggle.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
+    LockMasterToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
+    LockMasterToggle.Font = Enum.Font.GothamBold
+    LockMasterToggle.TextSize = 12
+    LockMasterToggle.Text = "⏸ COMBAT SYSTEM: OFF"
+    Instance.new("UICorner", LockMasterToggle).CornerRadius = UDim.new(0, 7)
+    LockMasterToggle.MouseButton1Click:Connect(function()
+        Config.Enabled = not Config.Enabled
+        LockMasterToggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(0, 170, 95) or Color3.fromRGB(30, 35, 50)
+        LockMasterToggle.Text = Config.Enabled and "▶ COMBAT SYSTEM: ACTIVE" or "⏸ COMBAT SYSTEM: OFF"
+        if not Config.Enabled then ClearFlightPhysics() end
+    end)
+
+    -- Fly Speed Panel
+    local SpeedCard = Instance.new("Frame", LockPage)
+    SpeedCard.Size = UDim2.new(1, 0, 0, 108)
+    SpeedCard.BackgroundColor3 = Color3.fromRGB(16, 22, 30)
+    Instance.new("UICorner", SpeedCard).CornerRadius = UDim.new(0, 8)
+    local SpeedCardStroke = Instance.new("UIStroke", SpeedCard)
+    SpeedCardStroke.Color = Color3.fromRGB(0, 200, 140)
+    SpeedCardStroke.Thickness = 1.2
+
+    local SpeedLabel = Instance.new("TextLabel", SpeedCard)
+    SpeedLabel.Size = UDim2.new(0.65, 0, 0, 22)
+    SpeedLabel.Position = UDim2.new(0, 10, 0, 6)
+    SpeedLabel.BackgroundTransparency = 1
+    SpeedLabel.TextColor3 = Color3.fromRGB(180, 255, 225)
+    SpeedLabel.Font = Enum.Font.GothamBold
+    SpeedLabel.TextSize = 11.5
+    SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
+    SpeedLabel.Text = "✈ FLY SPEED: " .. Config.FlySpeed .. " studs/s"
+
+    local SpeedInputBox = Instance.new("TextBox", SpeedCard)
+    SpeedInputBox.Size = UDim2.new(0, 64, 0, 22)
+    SpeedInputBox.Position = UDim2.new(1, -74, 0, 6)
+    SpeedInputBox.BackgroundColor3 = Color3.fromRGB(24, 34, 45)
+    SpeedInputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SpeedInputBox.Font = Enum.Font.GothamBold
+    SpeedInputBox.TextSize = 11
+    SpeedInputBox.Text = tostring(Config.FlySpeed)
+    Instance.new("UICorner", SpeedInputBox).CornerRadius = UDim.new(0, 4)
+
+    local STrack = Instance.new("Frame", SpeedCard)
+    STrack.Size = UDim2.new(0.72, 0, 0, 8)
+    STrack.Position = UDim2.new(0.14, 0, 0, 40)
+    STrack.BackgroundColor3 = Color3.fromRGB(30, 45, 55)
+    Instance.new("UICorner", STrack).CornerRadius = UDim.new(1, 0)
+
+    local SFill = Instance.new("Frame", STrack)
+    SFill.BackgroundColor3 = Color3.fromRGB(0, 220, 140)
+    SFill.BorderSizePixel = 0
+    SFill.Size = UDim2.new((Config.FlySpeed - 50) / 300, 0, 1, 0)
+    Instance.new("UICorner", SFill).CornerRadius = UDim.new(1, 0)
+
+    local SKnob = Instance.new("TextButton", STrack)
+    SKnob.Size = UDim2.new(0, 18, 0, 18)
+    SKnob.Position = UDim2.new((Config.FlySpeed - 50) / 300, -9, 0.5, -9)
+    SKnob.BackgroundColor3 = Color3.fromRGB(140, 255, 190)
+    SKnob.Text = ""
+    Instance.new("UICorner", SKnob).CornerRadius = UDim.new(1, 0)
+
+    local function SyncSpeedUI()
+        local ratio = math.clamp((Config.FlySpeed - 50) / 300, 0, 1)
+        SFill.Size = UDim2.new(ratio, 0, 1, 0)
+        SKnob.Position = UDim2.new(ratio, -9, 0.5, -9)
+        SpeedLabel.Text = "✈ FLY SPEED: " .. Config.FlySpeed .. " studs/s"
+        SpeedInputBox.Text = tostring(Config.FlySpeed)
+    end
+
+    SpeedInputBox.FocusLost:Connect(function()
+        local n = tonumber(SpeedInputBox.Text)
+        if n then Config.FlySpeed = math.clamp(math.floor(n), 50, 350) end
+        SyncSpeedUI()
+    end)
+
+    local isDraggingSpeed = false
+    SKnob.MouseButton1Down:Connect(function() isDraggingSpeed = true end)
+    UserInputService.InputEnded:Connect(function(i)
+        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
+            isDraggingSpeed = false
+        end
+    end)
+    RunService.RenderStepped:Connect(function()
+        if isDraggingSpeed then
+            local mouse = LocalPlayer:GetMouse()
+            local ratio = math.clamp((mouse.X - STrack.AbsolutePosition.X) / STrack.AbsoluteSize.X, 0, 1)
+            Config.FlySpeed = math.floor(50 + ratio * 300)
+            SyncSpeedUI()
+        end
+    end)
+
+    local BtnMinusSpeed = Instance.new("TextButton", SpeedCard)
+    BtnMinusSpeed.Size = UDim2.new(0, 26, 0, 24)
+    BtnMinusSpeed.Position = UDim2.new(0, 8, 0, 32)
+    BtnMinusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 65)
+    BtnMinusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BtnMinusSpeed.Font = Enum.Font.GothamBold
+    BtnMinusSpeed.TextSize = 14
+    BtnMinusSpeed.Text = "−"
+    Instance.new("UICorner", BtnMinusSpeed).CornerRadius = UDim.new(0, 4)
+    BtnMinusSpeed.MouseButton1Click:Connect(function()
+        Config.FlySpeed = math.max(50, Config.FlySpeed - 15)
+        SyncSpeedUI()
+    end)
+
+    local BtnPlusSpeed = Instance.new("TextButton", SpeedCard)
+    BtnPlusSpeed.Size = UDim2.new(0, 26, 0, 24)
+    BtnPlusSpeed.Position = UDim2.new(1, -34, 0, 32)
+    BtnPlusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 65)
+    BtnPlusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
+    BtnPlusSpeed.Font = Enum.Font.GothamBold
+    BtnPlusSpeed.TextSize = 14
+    BtnPlusSpeed.Text = "+"
+    Instance.new("UICorner", BtnPlusSpeed).CornerRadius = UDim.new(0, 4)
+    BtnPlusSpeed.MouseButton1Click:Connect(function()
+        Config.FlySpeed = math.min(350, Config.FlySpeed + 15)
+        SyncSpeedUI()
+    end)
+
+    local Presets = {
+        {Name = "150 (Safe)", Speed = 150},
+        {Name = "220 (Fast)", Speed = 220},
+        {Name = "260 (Turbo)", Speed = 260},
+        {Name = "350 (Max)", Speed = 350}
+    }
+    for i, pData in ipairs(Presets) do
+        local pBtn = Instance.new("TextButton", SpeedCard)
+        pBtn.Size = UDim2.new(0.22, -4, 0, 24)
+        pBtn.Position = UDim2.new((i - 1) * 0.25, 6, 0, 74)
+        pBtn.BackgroundColor3 = Color3.fromRGB(25, 40, 50)
+        pBtn.TextColor3 = Color3.fromRGB(140, 230, 200)
+        pBtn.Font = Enum.Font.GothamBold
+        pBtn.TextSize = 9.5
+        pBtn.Text = pData.Name
+        Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
+        pBtn.MouseButton1Click:Connect(function()
+            Config.FlySpeed = pData.Speed
+            SyncSpeedUI()
+        end)
+    end
+
+    -- Overhead Height Adjustment
+    local HeightSection = Instance.new("Frame", LockPage)
+    HeightSection.Size = UDim2.new(1, 0, 0, 36)
+    HeightSection.BackgroundColor3 = Color3.fromRGB(16, 22, 28)
+    Instance.new("UICorner", HeightSection).CornerRadius = UDim.new(0, 6)
+
+    local HeightLabel = Instance.new("TextLabel", HeightSection)
+    HeightLabel.Size = UDim2.new(0.68, 0, 1, 0)
+    HeightLabel.Position = UDim2.new(0, 10, 0, 0)
+    HeightLabel.BackgroundTransparency = 1
+    HeightLabel.TextColor3 = Color3.fromRGB(150, 230, 255)
+    HeightLabel.Font = Enum.Font.GothamBold
+    HeightLabel.TextSize = 10.5
+    HeightLabel.TextXAlignment = Enum.TextXAlignment.Left
+    HeightLabel.Text = "🛡️ OVERHEAD HEIGHT: " .. Config.OverheadDistance .. " studs"
+
+    local HMinus = Instance.new("TextButton", HeightSection)
+    HMinus.Size = UDim2.new(0, 24, 0, 24)
+    HMinus.Position = UDim2.new(1, -54, 0.5, -12)
+    HMinus.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    HMinus.TextColor3 = Color3.fromRGB(255, 255, 255)
+    HMinus.Font = Enum.Font.GothamBold
+    HMinus.TextSize = 13
+    HMinus.Text = "−"
+    Instance.new("UICorner", HMinus).CornerRadius = UDim.new(0, 4)
+    HMinus.MouseButton1Click:Connect(function()
+        Config.OverheadDistance = math.max(4, Config.OverheadDistance - 1)
+        HeightLabel.Text = "🛡️ OVERHEAD HEIGHT: " .. Config.OverheadDistance .. " studs"
+    end)
+
+    local HPlus = Instance.new("TextButton", HeightSection)
+    HPlus.Size = UDim2.new(0, 24, 0, 24)
+    HPlus.Position = UDim2.new(1, -26, 0.5, -12)
+    HPlus.BackgroundColor3 = Color3.fromRGB(35, 55, 60)
+    HPlus.TextColor3 = Color3.fromRGB(255, 255, 255)
+    HPlus.Font = Enum.Font.GothamBold
+    HPlus.TextSize = 13
+    HPlus.Text = "+"
+    Instance.new("UICorner", HPlus).CornerRadius = UDim.new(0, 4)
+    HPlus.MouseButton1Click:Connect(function()
+        Config.OverheadDistance = math.min(25, Config.OverheadDistance + 1)
+        HeightLabel.Text = "🛡️ OVERHEAD HEIGHT: " .. Config.OverheadDistance .. " studs"
+    end)
+
+    -- Spy Cam Toggle
+    local SpectateToggleBtn = Instance.new("TextButton", LockPage)
+    SpectateToggleBtn.Size = UDim2.new(1, 0, 0, 32)
+    SpectateToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 30, 45)
+    SpectateToggleBtn.TextColor3 = Color3.fromRGB(140, 210, 255)
+    SpectateToggleBtn.Font = Enum.Font.GothamBold
+    SpectateToggleBtn.TextSize = 10.5
+    SpectateToggleBtn.Text = "👁️ SPECTATE SPY CAM: OFF"
+    Instance.new("UICorner", SpectateToggleBtn).CornerRadius = UDim.new(0, 6)
+    SpectateToggleBtn.MouseButton1Click:Connect(function()
+        Config.Spectate = not Config.Spectate
+        SpectateToggleBtn.BackgroundColor3 = Config.Spectate and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(20, 30, 45)
+        SpectateToggleBtn.TextColor3 = Config.Spectate and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(140, 210, 255)
+        SpectateToggleBtn.Text = Config.Spectate and "👁️ SPECTATE SPY CAM: ACTIVE" or "👁️ SPECTATE SPY CAM: OFF"
+        UpdateSpectateCamera()
+    end)
+
+    -- Status Card
+    local TargetStatusCard = Instance.new("TextLabel", LockPage)
+    TargetStatusCard.Size = UDim2.new(1, 0, 0, 56)
+    TargetStatusCard.BackgroundColor3 = Color3.fromRGB(14, 18, 24)
+    TargetStatusCard.TextColor3 = Color3.fromRGB(200, 240, 225)
+    TargetStatusCard.Font = Enum.Font.Gotham
+    TargetStatusCard.TextSize = 9.5
+    TargetStatusCard.TextWrapped = true
+    TargetStatusCard.Text = "Selected Target: NONE\nClick a player below to lock permanently."
+    Instance.new("UICorner", TargetStatusCard).CornerRadius = UDim.new(0, 6)
+
+    local ClearTargetBtn = Instance.new("TextButton", LockPage)
+    ClearTargetBtn.Size = UDim2.new(1, 0, 0, 26)
+    ClearTargetBtn.BackgroundColor3 = Color3.fromRGB(45, 25, 30)
+    ClearTargetBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
+    ClearTargetBtn.Font = Enum.Font.GothamBold
+    ClearTargetBtn.TextSize = 10
+    ClearTargetBtn.Text = "✕ CANCEL / RESET TARGET (SET NIL)"
+    Instance.new("UICorner", ClearTargetBtn).CornerRadius = UDim.new(0, 5)
+    ClearTargetBtn.MouseButton1Click:Connect(function()
+        Config.SelectedPlayer = nil
+        ClearFlightPhysics()
+        UpdateSpectateCamera()
+        if RefreshPList then RefreshPList() end
+    end)
+
+    -- Player Selection List
+    local PList = Instance.new("Frame", LockPage)
+    PList.Size = UDim2.new(1, 0, 0, 160)
+    PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
+    Instance.new("UICorner", PList).CornerRadius = UDim.new(0, 6)
+
+    local PScroll = Instance.new("ScrollingFrame", PList)
+    PScroll.Size = UDim2.new(1, -8, 1, -8)
+    PScroll.Position = UDim2.new(0, 4, 0, 4)
+    PScroll.BackgroundTransparency = 1
+    PScroll.ScrollBarThickness = 3
+    local PLayout = Instance.new("UIListLayout", PScroll)
+    PLayout.SortOrder = Enum.SortOrder.LayoutOrder
+    PLayout.Padding = UDim.new(0, 4)
+
+    local PButtons = {}
+    RefreshPList = function()
+        for _, c in ipairs(PScroll:GetChildren()) do
+            if c:IsA("TextButton") then c:Destroy() end
+        end
+        PButtons = {}
         local count = 0
         for _, p in ipairs(Players:GetPlayers()) do
             if p ~= LocalPlayer then
-                local st = GetPvPState(p)
-                if not Config.FilterOnlyAttackable or st.CanAttack then
-                    count = count + 1
-                    local isSel = (Config.SelectedPlayer == p)
-                    local b = Instance.new("TextButton", PList)
-                    b.Size = UDim2.new(1, 0, 0, 26)
-                    b.BackgroundColor3 = isSel and Color3.fromRGB(0, 150, 85) or Color3.fromRGB(18, 22, 28)
-                    b.TextColor3 = isSel and Color3.fromRGB(255, 255, 255) or st.Color
-                    b.Font = Enum.Font.GothamBold
-                    b.TextSize = 9
-                    b.TextXAlignment = Enum.TextXAlignment.Left
-                    b.Text = string.format("  %s %s [Lv.%d] | %d studs", isSel and "[🎯]" or st.Tag, p.Name, st.Level, st.Distance)
-                    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
-                    
-                    b.MouseButton1Click:Connect(function()
-                        if Config.SelectedPlayer == p then
-                            Config.SelectedPlayer = nil
-                            ResetCamera()
-                        else
-                            Config.SelectedPlayer = p
-                            UpdateCameraSubject()
-                        end
-                        RefreshPlayerList()
-                    end)
-                end
+                count = count + 1
+                local st = GetPlayerCombatState(p)
+                local isSelected = (Config.SelectedPlayer == p)
+
+                local b = Instance.new("TextButton", PScroll)
+                b.Size = UDim2.new(1, 0, 0, 28)
+                b.BackgroundColor3 = isSelected and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(18, 22, 28)
+                b.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or st.Color
+                b.Font = Enum.Font.GothamBold
+                b.TextSize = 9.5
+                b.TextXAlignment = Enum.TextXAlignment.Left
+                b.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
+                Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
+                PButtons[p] = b
+
+                b.MouseButton1Click:Connect(function()
+                    if Config.SelectedPlayer == p then
+                        Config.SelectedPlayer = nil
+                        ClearFlightPhysics()
+                    else
+                        Config.SelectedPlayer = p
+                    end
+                    UpdateSpectateCamera()
+                    RefreshPList()
+                end)
             end
         end
-        PList.CanvasSize = UDim2.new(0, 0, 0, count * 29)
+        PScroll.CanvasSize = UDim2.new(0, 0, 0, count * 32)
     end
-    RefreshPlayerList()
-    Players.PlayerAdded:Connect(RefreshPlayerList)
-    Players.PlayerRemoving:Connect(RefreshPlayerList)
-    
-    -- Feature Toggles Helper
-    local function AddToggle(name, state, cb)
-        local btn = Instance.new("TextButton", Scroll)
-        btn.Size = UDim2.new(1, 0, 0, 28)
-        btn.BackgroundColor3 = state and Color3.fromRGB(20, 85, 60) or Color3.fromRGB(24, 20, 28)
-        btn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    RefreshPList()
+    Players.PlayerAdded:Connect(RefreshPList)
+    Players.PlayerRemoving:Connect(RefreshPList)
+
+    -- [[ TAB 2: GODMODE & MODULES ]] --
+    local function AddToggle(parent, title, state, callback)
+        local btn = Instance.new("TextButton", parent)
+        btn.Size = UDim2.new(1, 0, 0, 34)
+        btn.BackgroundColor3 = state and Color3.fromRGB(20, 95, 65) or Color3.fromRGB(20, 24, 30)
+        btn.TextColor3 = Color3.fromRGB(240, 255, 245)
         btn.Font = Enum.Font.GothamBold
-        btn.TextSize = 9
-        btn.Text = (state and "✅ " or "❌ ") .. name
-        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
+        btn.TextSize = 10.5
+        btn.Text = (state and "✅ " or "❌ ") .. title
+        Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
         btn.MouseButton1Click:Connect(function()
             state = not state
-            btn.BackgroundColor3 = state and Color3.fromRGB(20, 85, 60) or Color3.fromRGB(24, 20, 28)
-            btn.Text = (state and "✅ " or "❌ ") .. name
-            cb(state)
+            btn.BackgroundColor3 = state and Color3.fromRGB(20, 95, 65) or Color3.fromRGB(20, 24, 30)
+            btn.Text = (state and "✅ " or "❌ ") .. title
+            callback(state)
         end)
     end
-    
-    AddToggle("Infinite Damage Stream (15x Multi-Hit)", Config.DamageExploit, function(v) Config.DamageExploit = v end)
-    AddToggle("Permanent Race V4 Awakening", Config.PermaRaceV4, function(v) Config.PermaRaceV4 = v end)
-    AddToggle("Infinite Geppo & Zero-CD Soru", Config.InfiniteGeppo, function(v) Config.InfiniteGeppo = v; Config.InfiniteSoru = v end)
-    AddToggle("Auto Buso Haki & Ken", Config.AutoHaki, function(v) Config.AutoHaki = v; Config.AutoKen = v end)
-    AddToggle("Anti-Stun & Anti-Knockback", Config.AntiStun, function(v) Config.AntiStun = v; Config.AntiKnockback = v end)
-    AddToggle("Spy Cam (Spectate Target)", Config.Spectate, function(v) 
-        Config.Spectate = v 
-        UpdateCameraSubject()
-    end)
-    AddToggle("ESP Radar & Status Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
-    AddToggle("Filter Only Attackable [PvP ON]", Config.FilterOnlyAttackable, function(v) 
-        Config.FilterOnlyAttackable = v 
-        RefreshPlayerList()
-    end)
-    AddToggle("Auto Server Hop (Bounty Hunter)", Config.AutoServerHop, function(v) Config.AutoServerHop = v end)
-    
-    -- Action Buttons
-    local FixCam = Instance.new("TextButton", Scroll)
-    FixCam.Size = UDim2.new(1, 0, 0, 28)
-    FixCam.BackgroundColor3 = Color3.fromRGB(25, 45, 60)
-    FixCam.TextColor3 = Color3.fromRGB(160, 230, 255)
-    FixCam.Font = Enum.Font.GothamBold
-    FixCam.TextSize = 9.5
-    FixCam.Text = "🔧 FIX & RESET CAMERA"
-    Instance.new("UICorner", FixCam).CornerRadius = UDim.new(0, 5)
-    FixCam.MouseButton1Click:Connect(ResetCamera)
-    
-    local Hop = Instance.new("TextButton", Scroll)
-    Hop.Size = UDim2.new(1, 0, 0, 30)
-    Hop.BackgroundColor3 = Color3.fromRGB(45, 30, 75)
-    Hop.TextColor3 = Color3.fromRGB(220, 190, 255)
-    Hop.Font = Enum.Font.GothamBold
-    Hop.TextSize = 10
-    Hop.Text = "🌐 MANUAL SERVER HOP"
-    Instance.new("UICorner", Hop).CornerRadius = UDim.new(0, 5)
-    Hop.MouseButton1Click:Connect(ExecuteServerHop)
-    
-    Scroll.CanvasSize = UDim2.new(0, 0, 0, 560)
-    
-    -- UI Loop
+
+    AddToggle(ConfigPage, "Auto Race V4 Awakening", Config.AutoRaceV4, function(v) Config.AutoRaceV4 = v end)
+    AddToggle(ConfigPage, "Desync Godmode Matrix", Config.GodmodeDefense, function(v) Config.GodmodeDefense = v end)
+    AddToggle(ConfigPage, "Anti-Stun & Anti-Ragdoll", Config.AntiStun, function(v) Config.AntiStun = v; Config.AntiRagdoll = v end)
+    AddToggle(ConfigPage, "Anti-Knockback (No Fling)", Config.AntiKnockback, function(v) Config.AntiKnockback = v end)
+    AddToggle(ConfigPage, "Auto Escape (<20% HP)", Config.AutoEscapeLowHP, function(v) Config.AutoEscapeLowHP = v end)
+    AddToggle(ConfigPage, "Player ESP & Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
+    AddToggle(ConfigPage, "Auto Buso Haki", Config.AutoHaki, function(v) Config.AutoHaki = v end)
+    AddToggle(ConfigPage, "Auto Ken Haki", Config.AutoKen, function(v) Config.AutoKen = v end)
+    AddToggle(ConfigPage, "Fast Attack Exploit", Config.FastAttack, function(v) Config.FastAttack = v end)
+    AddToggle(ConfigPage, "Auto Skill Rotation (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
+
+    LockPage.CanvasSize = UDim2.new(0, 0, 0, 520)
+    ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 380)
+
+    -- Realtime UI Loop
     task.spawn(function()
-        while sg.Parent do
-            task.wait(0.3)
+        while ScreenGui.Parent do
+            task.wait(0.25)
             local cur = Config.SelectedPlayer
-            if Config.Enabled and cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
-                local st = GetPvPState(cur)
-                MiniDot.BackgroundColor3 = st.CanAttack and Color3.fromRGB(0, 240, 140) or Color3.fromRGB(255, 70, 70)
-                MiniText.Text = string.format("%s %s (%d HP)", st.Tag, cur.Name, st.Health)
-                Card.Text = string.format("🎯 TARGET: %s (Lv.%d)\n%s — %s\nHP: %d/%d | Dist: %d studs",
-                    cur.Name, st.Level, st.Tag, st.Reason, st.Health, st.MaxHealth, st.Distance)
+
+            if IsEscaping then
+                StatusDot.BackgroundColor3 = Color3.fromRGB(255, 220, 0)
+                MiniLabel.Text = "🛡️ ESCAPING LOW HP"
+            elseif Config.Enabled and cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
+                StatusDot.BackgroundColor3 = Color3.fromRGB(255, 45, 45)
+                local hp, maxHp = GetPlayerHealth(cur)
+                MiniLabel.Text = string.format("⚔ %s | %d/%d HP", cur.Name, hp, maxHp)
             elseif Config.Enabled then
-                MiniDot.BackgroundColor3 = Color3.fromRGB(255, 200, 40)
-                MiniText.Text = "🎯 Select Player from List"
-                Card.Text = "🎯 STATUS RADAR: NO TARGET\nClick a player to track."
+                StatusDot.BackgroundColor3 = Color3.fromRGB(0, 230, 140)
+                MiniLabel.Text = "🎯 Select Target from List"
             else
-                MiniDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniText.Text = "FORENSIC v150 | IDLE"
-                Card.Text = "⏸ SYSTEM PAUSED\nEnable COMBAT & LOCK to track."
+                StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
+                MiniLabel.Text = "NONTK v98 | IDLE"
+            end
+
+            for p, btn in pairs(PButtons) do
+                if p and p.Parent then
+                    local st = GetPlayerCombatState(p)
+                    local isSelected = (Config.SelectedPlayer == p)
+                    btn.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
+                    btn.BackgroundColor3 = isSelected and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(18, 22, 28)
+                    btn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or st.Color
+                end
+            end
+
+            if not Config.Enabled then
+                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nSpeed: %d studs/s | Height: %d studs\nEnable COMBAT SYSTEM to lock & attack.", Config.FlySpeed, Config.OverheadDistance)
+            elseif cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
+                local st = GetPlayerCombatState(cur)
+                local spyMsg = Config.Spectate and " | 👁️ SPY CAM: ON" or ""
+                TargetStatusCard.Text = string.format("⚔ LOCKED: %s (Lv.%d)%s\n🔴 GLUE OVERHEAD ATTACK | HP: %d/%d\nSpeed: %d studs/s | Height: %d studs",
+                    cur.Name, st.Details.Level, spyMsg, st.Details.Health, st.Details.MaxHealth, Config.FlySpeed, Config.OverheadDistance)
+            else
+                TargetStatusCard.Text = string.format("🎯 TARGET: NONE\nSpeed: %d studs/s | Height: %d studs\nSelect a player from the list to attack.", Config.FlySpeed, Config.OverheadDistance)
             end
         end
     end)
 end
 
-BuildGUI()
+BuildUI()
