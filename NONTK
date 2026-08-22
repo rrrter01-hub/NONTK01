@@ -1,10 +1,11 @@
--- [[ BLOX FRUITS BOUNTY HUNTER - FIXED WARP & STICK ENGINE ]]
--- Fixed: Rubberbanding (ดีดกลับ), Physics Stutter, และ Attack Desync
+-- [[ BLOX FRUITS FULL AUTO COMBO & M1 ANNIHILATOR ]]
+-- Platform: PC & Mobile (Delta, Codex, Arceus X, Wave, Solara)
+-- Feature: Melee -> Sword -> Fruit Skill Rotation + Cooldown M1 Spam + Aimlock
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
-local UserInputService = game:GetService("UserInputService")
+local VirtualInputManager = game:GetService("VirtualInputManager")
 local Workspace = game:GetService("Workspace")
 local CoreGui = game:GetService("CoreGui")
 
@@ -13,15 +14,16 @@ local Camera = Workspace.CurrentCamera
 
 -- // CONFIGURATION
 local Config = {
-    AutoAttack = false,
+    AutoCombo = false,
     AutoWarp = false,
     SpectateTarget = false,
-    AttackDistance = 3.5, -- ระยะห่างด้านหลังเป้าหมาย (studs)
-    AttackHeight = 2.0,   -- ระยะความสูงเหนือเป้าหมาย (studs)
+    ComboMode = "FullCombo", -- "FullCombo" (หมัด->ดาบ->ผล) หรือ "M1Spam" (หมัดรัวอย่างเดียว)
+    AttackDistance = 3.0,
+    AttackHeight = 1.5,
     SelectedTarget = nil,
-    AutoEquip = "Melee",  -- Melee / Sword / Fruit
     SafeZoneCheck = true,
-    FastM1Delay = 0.08
+    M1Speed = 0.03,          -- ความเร็วในการสับ M1
+    SkillDelay = 0.25        -- ดีเลย์ระหว่างกดแต่ละสกิล
 }
 
 -- // TARGET STATS & SAFE ZONE
@@ -30,11 +32,8 @@ local function IsPlayerInSafeZone(player)
     local char = player.Character
     if char:FindFirstChildOfClass("ForceField") then return true end
     if char:FindFirstChild("SafeZone") or char:FindFirstChild("InSafeZone") then return true end
-    
     local data = player:FindFirstChild("Data")
-    if data and data:FindFirstChild("Level") and data.Level.Value < 20 then
-        return true
-    end
+    if data and data:FindFirstChild("Level") and data.Level.Value < 20 then return true end
     return false
 end
 
@@ -61,46 +60,137 @@ local function GetDistance(player)
     return math.floor((LocalPlayer.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude)
 end
 
--- // AUTO EQUIP WEAPON
-local function EnsureWeaponEquipped()
-    local char = LocalPlayer.Character
+-- // WEAPON MANAGER
+local function GetToolByType(category)
     local bp = LocalPlayer:FindFirstChild("Backpack")
-    if not char or not bp then return end
-    
-    local currentTool = char:FindFirstChildOfClass("Tool")
-    if not currentTool then
-        for _, tool in pairs(bp:GetChildren()) do
-            if tool:IsA("Tool") then
-                local toolType = tool:GetAttribute("WeaponType") or tool.ToolTip
-                if string.find(string.lower(tool.Name), string.lower(Config.AutoEquip)) or 
-                   (toolType and string.find(string.lower(toolType), string.lower(Config.AutoEquip))) then
-                    char.Humanoid:EquipTool(tool)
-                    break
-                end
+    local char = LocalPlayer.Character
+    if not bp or not char then return nil end
+
+    local allTools = {}
+    for _, t in pairs(char:GetChildren()) do if t:IsA("Tool") then table.insert(allTools, t) end end
+    for _, t in pairs(bp:GetChildren()) do if t:IsA("Tool") then table.insert(allTools, t) end end
+
+    for _, tool in pairs(allTools) do
+        local tType = tool:GetAttribute("WeaponType") or tool.ToolTip or ""
+        local name = string.lower(tool.Name)
+        category = string.lower(category)
+
+        if category == "melee" then
+            if tool.ToolTip == "Melee" or string.find(name, "combat") or string.find(name, "karate") or 
+               string.find(name, "superhuman") or string.find(name, "godhuman") or string.find(name, "dragon") or 
+               string.find(name, "claw") or string.find(name, "electric") or string.find(name, "death step") then
+                return tool
+            end
+        elseif category == "sword" then
+            if tool.ToolTip == "Sword" or string.find(name, "blade") or string.find(name, "katana") or 
+               string.find(name, "saber") or string.find(name, "scythe") or string.find(name, "dagger") or 
+               string.find(name, "sword") or string.find(name, "yoru") or string.find(name, "tushita") or string.find(name, "yama") then
+                return tool
+            end
+        elseif category == "fruit" then
+            if tool.ToolTip == "Blox Fruit" or string.find(name, "fruit") or string.find(name, "dough") or 
+               string.find(name, "leopard") or string.find(name, "portal") or string.find(name, "dragon") or 
+               string.find(name, "kitsune") or string.find(name, "t-rex") or string.find(name, "venom") or string.find(name, "buddha") then
+                return tool
             end
         end
     end
+    return nil
 end
 
--- // M1 ATTACK EXECUTION
-local function AttackTarget()
-    if not LocalPlayer.Character then return end
-    EnsureWeaponEquipped()
-    
-    local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-    if tool then
-        tool:Activate()
+local function EquipTool(tool)
+    if not tool or not LocalPlayer.Character then return end
+    local hum = LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+    if hum and tool.Parent ~= LocalPlayer.Character then
+        hum:EquipTool(tool)
     end
-    
-    -- Virtual input bypass for M1 hit registration
-    VirtualUser:CaptureController()
-    VirtualUser:Button1Down(Vector2.new(0, 0))
-    task.wait(0.01)
-    VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
--- // HEARTBEAT LOCK-ON (แก้ปัญหาวาปไปวาปมา / NO RUBBERBAND)
--- ใช้ Heartbeat เพื่อตรึงตำแหน่งตามเป้าหมายแบบเรียลไทม์ และ Reset Velocity ป้องกันเซิร์ฟเวอร์ดีดกลับ
+-- // AIMLOCK & KEYBOARD PRESS SIMULATOR
+local function AimAtTarget(targetPlayer)
+    if not targetPlayer or not targetPlayer.Character then return end
+    local myHrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+    local tHrp = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    if myHrp and tHrp then
+        myHrp.CFrame = CFrame.new(myHrp.Position, Vector3.new(tHrp.Position.X, myHrp.Position.Y, tHrp.Position.Z))
+    end
+end
+
+local function PressKey(keyCode)
+    pcall(function()
+        VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
+        task.wait(0.05)
+        VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
+    end)
+end
+
+-- // FAST M1 CLICKER
+local function ClickM1()
+    if not LocalPlayer.Character then return end
+    local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
+    if tool then tool:Activate() end
+
+    pcall(function()
+        VirtualUser:CaptureController()
+        VirtualUser:Button1Down(Vector2.new(0, 0))
+        task.wait(0.01)
+        VirtualUser:Button1Up(Vector2.new(0, 0))
+    end)
+end
+
+-- // COMBO EXECUTOR
+local isExecutingCombo = false
+local function ExecuteFullBurst(target)
+    if isExecutingCombo then return end
+    isExecutingCombo = true
+
+    local melee = GetToolByType("Melee")
+    local sword = GetToolByType("Sword")
+    local fruit = GetToolByType("Fruit")
+
+    -- 1. หมัดเปิดคอมโบ (Melee: Z -> X -> C)
+    if melee then
+        EquipTool(melee)
+        task.wait(0.1)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.Z); task.wait(Config.SkillDelay)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.X); task.wait(Config.SkillDelay)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.C); task.wait(Config.SkillDelay)
+    end
+
+    -- 2. ยัดดาบต่อ (Sword: Z -> X)
+    if sword then
+        EquipTool(sword)
+        task.wait(0.1)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.Z); task.wait(Config.SkillDelay)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.X); task.wait(Config.SkillDelay)
+    end
+
+    -- 3. ยัดผลปีศาจปิดฉาก (Fruit: Z -> X -> C -> V)
+    if fruit then
+        EquipTool(fruit)
+        task.wait(0.1)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.Z); task.wait(Config.SkillDelay)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.X); task.wait(Config.SkillDelay)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.C); task.wait(Config.SkillDelay)
+        AimAtTarget(target)
+        PressKey(Enum.KeyCode.V); task.wait(Config.SkillDelay)
+    end
+
+    -- 4. สลับกลับมาถือหมัดเพื่อเตรียมรัว M1 ในช่วงคูลดาวน์
+    if melee then EquipTool(melee) end
+    task.wait(0.2)
+    isExecutingCombo = false
+end
+
+-- // HEARTBEAT LOCK-ON (เกาะติดหลังศัตรู ไม่เด้งกลับ)
 RunService.Heartbeat:Connect(function()
     if Config.AutoWarp and Config.SelectedTarget and Config.SelectedTarget.Parent == Players then
         local target = Config.SelectedTarget
@@ -116,19 +206,17 @@ RunService.Heartbeat:Connect(function()
                 local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
 
                 if myHrp and targetHrp then
-                    -- คำนวณตำแหน่งให้อยู่ด้านหลังและหันหน้าเข้าหาเป้าหมายตลอดเวลา
-                    local behindOffset = targetHrp.CFrame * CFrame.new(0, Config.AttackHeight, Config.AttackDistance)
-                    myHrp.CFrame = CFrame.new(behindOffset.Position, targetHrp.Position)
+                    -- เกาะหลังศัตรู + หันหน้าเข้าหาเป้าหมาย
+                    local lockPosition = targetHrp.CFrame * CFrame.new(0, Config.AttackHeight, Config.AttackDistance)
+                    myHrp.CFrame = CFrame.new(lockPosition.Position, targetHrp.Position)
                     
-                    -- ล้างค่า Velocity ทิ้งทั้งหมดเพื่อไม่ให้ Physics ดึงตัวกลับ
+                    -- Zero Velocity ป้องกันการดีด
                     myHrp.AssemblyLinearVelocity = Vector3.zero
                     myHrp.AssemblyAngularVelocity = Vector3.zero
 
-                    -- ปิด Collision ชั่วคราวไม่ให้ตัวละครเบียดกันจนกระเด็น
+                    -- ปิดการชนกัน
                     for _, part in pairs(myChar:GetChildren()) do
-                        if part:IsA("BasePart") then
-                            part.CanCollide = false
-                        end
+                        if part:IsA("BasePart") then part.CanCollide = false end
                     end
                 end
             end
@@ -136,19 +224,23 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- // AUTO ATTACK LOOP
+-- // MAIN ATTACK & COMBO LOOP
 task.spawn(function()
     while true do
-        task.wait(Config.FastM1Delay)
-        if Config.AutoAttack and Config.SelectedTarget and Config.SelectedTarget.Parent == Players then
+        task.wait(Config.M1Speed)
+        if Config.AutoCombo and Config.SelectedTarget and Config.SelectedTarget.Parent == Players then
             local target = Config.SelectedTarget
             local _, hp = GetTargetHealth(target)
             local isSafe = IsPlayerInSafeZone(target)
 
             if hp > 0 and (not Config.SafeZoneCheck or not isSafe) then
                 local dist = GetDistance(target)
-                if dist <= 20 then
-                    AttackTarget()
+                if dist <= 22 then
+                    if Config.ComboMode == "FullCombo" and not isExecutingCombo then
+                        task.spawn(function() ExecuteFullBurst(target) end)
+                    end
+                    -- รัวหมัด M1 ซ้ำตลอดเวลา
+                    ClickM1()
                 end
             end
         end
@@ -171,9 +263,12 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- // UI BUILDER (MOBILE & PC)
+-- // ==========================================
+-- // TOUCH & MOUSE COMPATIBLE CLEAN UI ENGINE
+-- // ==========================================
+
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "Onyx_Bounty_Fixed"
+ScreenGui.Name = "Onyx_Combo_Destroyer"
 ScreenGui.ResetOnSpawn = false
 
 pcall(function()
@@ -182,36 +277,35 @@ end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
 local MainFrame = Instance.new("Frame")
-MainFrame.Size = UDim2.new(0, 350, 0, 470)
-MainFrame.Position = UDim2.new(0.5, -175, 0.5, -235)
-MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
+MainFrame.Size = UDim2.new(0, 360, 0, 480)
+MainFrame.Position = UDim2.new(0.5, -180, 0.5, -240)
+MainFrame.BackgroundColor3 = Color3.fromRGB(14, 14, 18)
 MainFrame.Active = true
 MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
 
 local Stroke = Instance.new("UIStroke", MainFrame)
-Stroke.Color = Color3.fromRGB(100, 30, 255)
-Stroke.Thickness = 1.5
+Stroke.Color = Color3.fromRGB(130, 40, 255)
+Stroke.Thickness = 1.6
 
--- Header
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 38)
+Title.Size = UDim2.new(1, 0, 0, 40)
 Title.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
-Title.Text = "⚡ ONYX BOUNTY LOCK (ANTI-RUBBERBAND)"
+Title.Text = "⚡ ONYX AUTO COMBO & M1 ANNIHILATOR"
 Title.TextColor3 = Color3.fromRGB(230, 230, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 12
 Title.Parent = MainFrame
 Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 10)
 
--- Mobile Floating Button
+-- Mobile Floating Icon
 local FloatBtn = Instance.new("TextButton")
-FloatBtn.Size = UDim2.new(0, 48, 0, 48)
+FloatBtn.Size = UDim2.new(0, 50, 0, 50)
 FloatBtn.Position = UDim2.new(0, 12, 0.45, 0)
-FloatBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 255)
-FloatBtn.Text = "⚡"
-FloatBtn.TextSize = 20
+FloatBtn.BackgroundColor3 = Color3.fromRGB(130, 40, 255)
+FloatBtn.Text = "⚔️"
+FloatBtn.TextSize = 22
 FloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 FloatBtn.Parent = ScreenGui
 Instance.new("UICorner", FloatBtn).CornerRadius = UDim.new(1, 0)
@@ -219,11 +313,11 @@ FloatBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
 end)
 
--- Target Status Board
+-- Target Stats Card
 local StatCard = Instance.new("Frame")
 StatCard.Size = UDim2.new(0.92, 0, 0, 110)
-StatCard.Position = UDim2.new(0.04, 0, 0, 46)
-StatCard.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+StatCard.Position = UDim2.new(0.04, 0, 0, 48)
+StatCard.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
 StatCard.Parent = MainFrame
 Instance.new("UICorner", StatCard).CornerRadius = UDim.new(0, 8)
 
@@ -239,7 +333,7 @@ TargetLabel.TextXAlignment = Enum.TextXAlignment.Left
 local InfoLabel = Instance.new("TextLabel", StatCard)
 InfoLabel.Size = UDim2.new(1, -14, 0, 75)
 InfoLabel.Position = UDim2.new(0, 8, 0, 28)
-InfoLabel.Text = "Level: -- | HP: --\nDistance: -- studs\nZone: --\nAttack Ready: --"
+InfoLabel.Text = "Level: -- | HP: --\nDistance: -- studs\nZone: --\nAttack State: IDLE"
 InfoLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
 InfoLabel.Font = Enum.Font.Gotham
 InfoLabel.TextSize = 12
@@ -248,9 +342,9 @@ InfoLabel.TextYAlignment = Enum.TextYAlignment.Top
 
 -- Player Selector
 local Scroll = Instance.new("ScrollingFrame")
-Scroll.Size = UDim2.new(0.92, 0, 0, 135)
-Scroll.Position = UDim2.new(0.04, 0, 0, 165)
-Scroll.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+Scroll.Size = UDim2.new(0.92, 0, 0, 140)
+Scroll.Position = UDim2.new(0.04, 0, 0, 168)
+Scroll.BackgroundColor3 = Color3.fromRGB(18, 18, 24)
 Scroll.ScrollBarThickness = 3
 Scroll.Parent = MainFrame
 Instance.new("UICorner", Scroll).CornerRadius = UDim.new(0, 8)
@@ -260,9 +354,9 @@ Layout.Padding = UDim.new(0, 3)
 
 local function MakeBtn(txt, pos, cb)
     local b = Instance.new("TextButton")
-    b.Size = UDim2.new(0.44, 0, 0, 34)
+    b.Size = UDim2.new(0.44, 0, 0, 36)
     b.Position = pos
-    b.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+    b.BackgroundColor3 = Color3.fromRGB(28, 28, 36)
     b.Text = txt
     b.TextColor3 = Color3.fromRGB(240, 240, 255)
     b.Font = Enum.Font.GothamBold
@@ -273,36 +367,38 @@ local function MakeBtn(txt, pos, cb)
     return b
 end
 
--- Action Buttons
-local WarpToggle = MakeBtn("Lock Warp: OFF", UDim2.new(0.04, 0, 0, 310), function(b)
+-- Controls Grid
+local WarpToggle = MakeBtn("Lock Warp: OFF", UDim2.new(0.04, 0, 0, 318), function(b)
     Config.AutoWarp = not Config.AutoWarp
     b.Text = "Lock Warp: " .. (Config.AutoWarp and "ON" or "OFF")
-    b.BackgroundColor3 = Config.AutoWarp and Color3.fromRGB(100, 30, 255) or Color3.fromRGB(30, 30, 38)
+    b.BackgroundColor3 = Config.AutoWarp and Color3.fromRGB(130, 40, 255) or Color3.fromRGB(28, 28, 36)
 end)
 
-local AttackToggle = MakeBtn("Auto M1: OFF", UDim2.new(0.52, 0, 0, 310), function(b)
-    Config.AutoAttack = not Config.AutoAttack
-    b.Text = "Auto M1: " .. (Config.AutoAttack and "ON" or "OFF")
-    b.BackgroundColor3 = Config.AutoAttack and Color3.fromRGB(240, 50, 50) or Color3.fromRGB(30, 30, 38)
+local ComboToggle = MakeBtn("Auto Combo: OFF", UDim2.new(0.52, 0, 0, 318), function(b)
+    Config.AutoCombo = not Config.AutoCombo
+    b.Text = "Auto Combo: " .. (Config.AutoCombo and "ON" or "OFF")
+    b.BackgroundColor3 = Config.AutoCombo and Color3.fromRGB(240, 50, 50) or Color3.fromRGB(28, 28, 36)
 end)
 
-local SpyToggle = MakeBtn("Spy Cam: OFF", UDim2.new(0.04, 0, 0, 352), function(b)
+local ModeToggle = MakeBtn("Mode: Full Burst", UDim2.new(0.04, 0, 0, 362), function(b)
+    if Config.ComboMode == "FullCombo" then
+        Config.ComboMode = "M1Spam"
+        b.Text = "Mode: M1 Only"
+    else
+        Config.ComboMode = "FullCombo"
+        b.Text = "Mode: Full Burst"
+    end
+end)
+
+local SpyToggle = MakeBtn("Spy Cam: OFF", UDim2.new(0.52, 0, 0, 362), function(b)
     Config.SpectateTarget = not Config.SpectateTarget
     b.Text = "Spy Cam: " .. (Config.SpectateTarget and "ON" or "OFF")
-    b.BackgroundColor3 = Config.SpectateTarget and Color3.fromRGB(0, 170, 110) or Color3.fromRGB(30, 30, 38)
+    b.BackgroundColor3 = Config.SpectateTarget and Color3.fromRGB(0, 170, 110) or Color3.fromRGB(28, 28, 36)
 end)
 
-local WeaponToggle = MakeBtn("Weapon: Melee", UDim2.new(0.52, 0, 0, 352), function(b)
-    if Config.AutoEquip == "Melee" then Config.AutoEquip = "Sword"
-    elseif Config.AutoEquip == "Sword" then Config.AutoEquip = "Fruit"
-    else Config.AutoEquip = "Melee" end
-    b.Text = "Weapon: " .. Config.AutoEquip
-end)
-
-local Refresh = MakeBtn("🔄 Refresh Player List", UDim2.new(0.04, 0, 0, 396), function() end)
+local Refresh = MakeBtn("🔄 Refresh Player List", UDim2.new(0.04, 0, 0, 410), function() end)
 Refresh.Size = UDim2.new(0.92, 0, 0, 34)
 
--- Populate List
 local function UpdateList()
     for _, c in pairs(Scroll:GetChildren()) do
         if c:IsA("TextButton") then c:Destroy() end
@@ -311,7 +407,7 @@ local function UpdateList()
         if p ~= LocalPlayer then
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(1, -6, 0, 30)
-            btn.BackgroundColor3 = (Config.SelectedTarget == p) and Color3.fromRGB(100, 30, 220) or Color3.fromRGB(28, 28, 35)
+            btn.BackgroundColor3 = (Config.SelectedTarget == p) and Color3.fromRGB(130, 40, 220) or Color3.fromRGB(25, 25, 32)
             local hp = GetTargetHealth(p)
             local lvl = GetTargetLevel(p)
             btn.Text = string.format(" %s | Lv.%s | HP: %s", p.DisplayName, tostring(lvl), tostring(hp))
@@ -336,7 +432,7 @@ Players.PlayerAdded:Connect(UpdateList)
 Players.PlayerRemoving:Connect(UpdateList)
 UpdateList()
 
--- Live Updater
+-- Telemetry HUD
 task.spawn(function()
     while true do
         task.wait(0.25)
@@ -354,11 +450,11 @@ task.spawn(function()
                 hpStr,
                 dist,
                 inSafe and "🛡️ SAFE ZONE" or "⚔️ COMBAT ZONE",
-                (hpVal > 0 and not inSafe) and "READY TO KILL" or "PROTECTED/DEAD"
+                (hpVal > 0 and not inSafe) and (isExecutingCombo and "🔥 CASTING COMBO..." or "⚡ SPAMMING M1") or "PROTECTED/DEAD"
             )
         else
             TargetLabel.Text = "Target: [ None Selected ]"
-            InfoLabel.Text = "Level: -- | HP: --\nDistance: -- studs\nZone: --\nStatus: --"
+            InfoLabel.Text = "Level: -- | HP: --\nDistance: -- studs\nZone: --\nStatus: IDLE"
         end
     end
 end)
