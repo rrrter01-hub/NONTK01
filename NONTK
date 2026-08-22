@@ -1,8 +1,7 @@
 --[[
-    BluezyGPT Bounty Hunter v2.0
+    BluezyGPT Bounty Hunter v3.0
     Blox Fruits (Roblox) — Mobile + PC
-    แก้ครบทุกบั๊ก syntax ที่ทำให้รันไม่ได้
-    เขียนใหม่ทั้งไฟล์ ไม่มีเว้นวรรค/จุด ในชื่อตัวแปร
+    รองรับ: Delta, Arceus X, Hydrogen, PC executors
 ]]
 
 local Players = game:GetService("Players")
@@ -78,12 +77,14 @@ end
 local function getPlayerBounty(player)
     local dataFolder = player:FindFirstChild("Data")
     if dataFolder then
-        local bounty = dataFolder:FindFirstChild("Bounty") or dataFolder:FindFirstChild("BountyHonor")
+        local bounty = dataFolder:FindFirstChild("Bounty")
+        if not bounty then bounty = dataFolder:FindFirstChild("BountyHonor") end
         if bounty then return bounty.Value end
     end
     local leaderstats = player:FindFirstChild("leaderstats")
     if leaderstats then
-        local bounty = leaderstats:FindFirstChild("Bounty") or leaderstats:FindFirstChild("Bounty/Honor")
+        local bounty = leaderstats:FindFirstChild("Bounty")
+        if not bounty then bounty = leaderstats:FindFirstChild("Bounty/Honor") end
         if bounty then return bounty.Value end
     end
     return 0
@@ -92,22 +93,22 @@ end
 local function isPlayerInPvP(player)
     local char = player.Character
     if not char then return false end
-    
+
     local dataFolder = player:FindFirstChild("Data")
     if dataFolder then
-        local pvp = dataFolder:FindFirstChild("PvpEnabled") 
+        local pvp = dataFolder:FindFirstChild("PvpEnabled")
         if not pvp then pvp = dataFolder:FindFirstChild("IsPvP") end
         if not pvp then pvp = dataFolder:FindFirstChild("PvP") end
         if pvp then return pvp.Value end
     end
-    
-    local hasWeapon = char:FindFirstChild("HasWeapon") 
+
+    local hasWeapon = char:FindFirstChild("HasWeapon")
     if not hasWeapon then hasWeapon = char:FindFirstChild("PvpEnabled") end
     if hasWeapon then return true end
-    
+
     local bounty = getPlayerBounty(player)
     if bounty > 0 then return true end
-    
+
     return false
 end
 
@@ -160,26 +161,26 @@ end
 
 local function createESP(player)
     if State.ESPObjects[player] then return end
-    
+
     local esp = {}
-    
+
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "BluezyESP_" .. player.Name
     billboard.Size = UDim2.new(0, 250, 0, 80)
     billboard.StudsOffset = Vector3.new(0, 3, 0)
     billboard.AlwaysOnTop = true
     billboard.LightInfluence = 0
-    
+
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(1, 0, 1, 0)
     frame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
     frame.BackgroundTransparency = 0.3
     frame.BorderSizePixel = 0
-    
+
     local corner = Instance.new("UICorner")
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = frame
-    
+
     local nameLabel = Instance.new("TextLabel")
     nameLabel.Size = UDim2.new(1, -10, 0, 22)
     nameLabel.Position = UDim2.new(0, 5, 0, 2)
@@ -189,7 +190,7 @@ local function createESP(player)
     nameLabel.Font = Enum.Font.GothamBold
     nameLabel.TextSize = 13
     nameLabel.TextXAlignment = Enum.TextXAlignment.Left
-    
+
     local levelLabel = Instance.new("TextLabel")
     levelLabel.Size = UDim2.new(1, -10, 0, 18)
     levelLabel.Position = UDim2.new(0, 5, 0, 24)
@@ -199,26 +200,26 @@ local function createESP(player)
     levelLabel.Font = Enum.Font.Gotham
     levelLabel.TextSize = 11
     levelLabel.TextXAlignment = Enum.TextXAlignment.Left
-    
+
     local healthBarBG = Instance.new("Frame")
     healthBarBG.Size = UDim2.new(1, -10, 0, 8)
     healthBarBG.Position = UDim2.new(0, 5, 0, 44)
     healthBarBG.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
     healthBarBG.BorderSizePixel = 0
-    
+
     local healthCorner = Instance.new("UICorner")
     healthCorner.CornerRadius = UDim.new(0, 4)
     healthCorner.Parent = healthBarBG
-    
+
     local healthBarFill = Instance.new("Frame")
     healthBarFill.Size = UDim2.new(1, 0, 1, 0)
     healthBarFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
     healthBarFill.BorderSizePixel = 0
-    
+
     local fillCorner = Instance.new("UICorner")
     fillCorner.CornerRadius = UDim.new(0, 4)
     fillCorner.Parent = healthBarFill
-    
+
     local distLabel = Instance.new("TextLabel")
     distLabel.Size = UDim2.new(1, -10, 0, 16)
     distLabel.Position = UDim2.new(0, 5, 0, 56)
@@ -228,14 +229,14 @@ local function createESP(player)
     distLabel.Font = Enum.Font.Gotham
     distLabel.TextSize = 10
     distLabel.TextXAlignment = Enum.TextXAlignment.Left
-    
+
     healthBarFill.Parent = healthBarBG
     healthBarBG.Parent = frame
     nameLabel.Parent = frame
     levelLabel.Parent = frame
     distLabel.Parent = frame
     frame.Parent = billboard
-    
+
     esp.Billboard = billboard
     esp.Frame = frame
     esp.NameLabel = nameLabel
@@ -243,9 +244,9 @@ local function createESP(player)
     esp.HealthBG = healthBarBG
     esp.HealthFill = healthBarFill
     esp.DistLabel = distLabel
-    
+
     State.ESPObjects[player] = esp
-    
+
     local function attachESP()
         local char = player.Character
         if not char then return end
@@ -256,9 +257,9 @@ local function createESP(player)
             billboard.Parent = char
         end
     end
-    
+
     attachESP()
-    
+
     player.CharacterAdded:Connect(function()
         task.wait(1)
         attachESP()
@@ -284,31 +285,31 @@ local function updateESP()
                 esp.Billboard.Enabled = false
             else
                 esp.Billboard.Enabled = State.ESPEnabled
-                
+
                 local _, _, localRoot = getCharacter(LocalPlayer)
                 if not localRoot then return end
-                
+
                 local dist = getDistance(root, localRoot)
                 local level = getPlayerLevel(player)
                 local bounty = getPlayerBounty(player)
                 local hp = getHealthPercent(player)
                 local inPvP = isPlayerInPvP(player)
-                
+
                 local nameColor = Color3.fromRGB(255, 255, 255)
                 if State.LockedPlayer == player then
                     nameColor = Color3.fromRGB(255, 50, 50)
                 elseif State.SelectedPlayer == player then
                     nameColor = Color3.fromRGB(255, 200, 50)
                 end
-                
+
                 esp.NameLabel.TextColor3 = nameColor
-                
+
                 if bounty > 0 then
                     esp.LevelLabel.Text = "Bounty: " .. formatNumber(bounty) .. " | HP: " .. hp .. "%"
                 else
                     esp.LevelLabel.Text = "Level: " .. level .. " | HP: " .. hp .. "%"
                 end
-                
+
                 esp.HealthFill.Size = UDim2.new(hp / 100, 0, 1, 0)
                 if hp > 50 then
                     esp.HealthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
@@ -317,11 +318,11 @@ local function updateESP()
                 else
                     esp.HealthFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
                 end
-                
+
                 local pvpText = "PvP: OFF"
                 if inPvP then pvpText = "PvP: ON" end
                 esp.DistLabel.Text = "Dist: " .. math.floor(dist) .. "m | " .. pvpText
-                
+
                 if State.LockedPlayer == player then
                     esp.LevelLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
                 else
@@ -342,12 +343,12 @@ local function stopFly()
         State.FlyConnection = nil
     end
     State.IsFlying = false
-    
+
     local _, hum = getCharacter(LocalPlayer)
     if hum then
         hum.PlatformStand = false
     end
-    
+
     local _, _, localRoot = getCharacter(LocalPlayer)
     if localRoot then
         local bodyVel = localRoot:FindFirstChild("BluezyFlyVel")
@@ -360,32 +361,32 @@ end
 local function startFlyToTarget()
     stopFly()
     State.IsFlying = true
-    
+
     State.FlyConnection = RunService.Heartbeat:Connect(function()
         if not State.LockedPlayer then
             stopFly()
             return
         end
-        
+
         local targetChar, targetHum, targetRoot = getCharacter(State.LockedPlayer)
         local localChar, localHum, localRoot = getCharacter(LocalPlayer)
-        
+
         if not targetRoot or not localRoot then
             return
         end
-        
+
         if targetHum.Health <= 0 then
             stopFly()
             return
         end
-        
+
         local targetPos = targetRoot.Position + Vector3.new(0, Config.FlyHeight, 0)
         local direction = targetPos - localRoot.Position
         local distance = direction.Magnitude
-        
+
         if distance > 2 then
             localHum.PlatformStand = true
-            
+
             local bodyVel = localRoot:FindFirstChild("BluezyFlyVel")
             if not bodyVel then
                 bodyVel = Instance.new("BodyVelocity")
@@ -394,10 +395,10 @@ local function startFlyToTarget()
                 bodyVel.Velocity = Vector3.zero
                 bodyVel.Parent = localRoot
             end
-            
+
             local flyVel = direction.Unit * math.min(Config.FlySpeed, distance * 10)
             bodyVel.Velocity = flyVel
-            
+
             local lookPos = targetRoot.Position
             local lookDir = lookPos - localRoot.Position
             if lookDir.Magnitude > 0.1 then
@@ -421,13 +422,13 @@ end
 local function findWeapon()
     local char = LocalPlayer.Character
     if not char then return nil end
-    
+
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Tool") then
             return item
         end
     end
-    
+
     local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
     if backpack then
         for _, item in ipairs(backpack:GetChildren()) do
@@ -438,7 +439,7 @@ local function findWeapon()
             end
         end
     end
-    
+
     return nil
 end
 
@@ -457,7 +458,7 @@ local function useSkill(skillKey)
                 return
             end
         end
-        
+
         local comm = ReplicatedStorage:FindFirstChild("Comm")
         if comm then
             local commE = comm:FindFirstChild("CommE")
@@ -479,41 +480,41 @@ end
 local function startAttack()
     stopAttack()
     State.IsAttacking = true
-    
+
     local attackTimer = 0
     local skillTimer = 0
     local comboStep = 1
     local skills = { "Z", "X", "C", "V" }
-    
+
     State.AttackConnection = RunService.Heartbeat:Connect(function(dt)
         if not State.LockedPlayer then
             stopAttack()
             return
         end
-        
+
         local targetChar, targetHum, targetRoot = getCharacter(State.LockedPlayer)
         local localChar, localHum, localRoot = getCharacter(LocalPlayer)
-        
+
         if not targetRoot or not localRoot then return end
         if targetHum.Health <= 0 then
             stopAttack()
             return
         end
-        
+
         local dist = getDistance(localRoot, targetRoot)
-        
+
         if dist <= Config.AttackRange then
             attackTimer = attackTimer + dt
             skillTimer = skillTimer + dt
-            
+
             if attackTimer >= Config.AttackCooldown then
                 attackTimer = 0
                 attackM1()
-                
+
                 local lookCFrame = CFrame.lookAt(localRoot.Position, targetRoot.Position)
                 localRoot.CFrame = localRoot.CFrame:Lerp(lookCFrame, 0.5)
             end
-            
+
             if Config.UseSkillInCombo and skillTimer >= Config.SkillDelay then
                 skillTimer = 0
                 local currentSkill = skills[comboStep]
@@ -536,7 +537,7 @@ end
 local function lockTarget(player)
     State.LockedPlayer = player
     State.SelectedPlayer = player
-    
+
     if player then
         startFlyToTarget()
         startAttack()
@@ -549,7 +550,7 @@ end
 local function findBestTarget()
     local bestPlayer = nil
     local bestScore = -math.huge
-    
+
     for _, player in ipairs(getValidPlayers()) do
         local _, _, root = getCharacter(player)
         local _, _, localRoot = getCharacter(LocalPlayer)
@@ -558,20 +559,20 @@ local function findBestTarget()
             local bounty = getPlayerBounty(player)
             local hp = getHealthPercent(player)
             local inPvP = isPlayerInPvP(player)
-            
+
             local score = 0
             if inPvP then score = score + 1000 end
             score = score + (bounty / 100)
             score = score - (dist / 10)
             score = score - ((100 - hp) / 5)
-            
+
             if score > bestScore then
                 bestScore = score
                 bestPlayer = player
             end
         end
     end
-    
+
     return bestPlayer
 end
 
@@ -636,7 +637,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -80, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "Bluezy Bounty Hunter v2.0"
+TitleLabel.Text = "Bluezy Bounty Hunter v3.0"
 TitleLabel.TextColor3 = Color3.fromRGB(150, 100, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 16
@@ -681,7 +682,7 @@ ContentScroll.BorderSizePixel = 0
 ContentScroll.ScrollBarThickness = 4
 ContentScroll.ScrollBarImageColor3 = Color3.fromRGB(100, 50, 255)
 ContentScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-ContentScroll.AutomaticCanvasSize = Enum.Agnes 2.5 FlashmaticSize.Y
+ContentScroll.Agnes 2.5 FlashmaticCanvasSize = Enum.Agnes 2.5 FlashmaticSize.Y
 ContentScroll.Parent = MainFrame
 
 local scrollLayout = Instance.new("UIListLayout")
@@ -705,11 +706,11 @@ local function createToggle(text, defaultState, callback)
     toggleFrame.Size = UDim2.new(1, 0, 0, 36)
     toggleFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     toggleFrame.BorderSizePixel = 0
-    
+
     local tc = Instance.new("UICorner")
     tc.CornerRadius = UDim.new(0, 8)
     tc.Parent = toggleFrame
-    
+
     local tLabel = Instance.new("TextLabel")
     tLabel.Size = UDim2.new(1, -70, 1, 0)
     tLabel.Position = UDim2.new(0, 10, 0, 0)
@@ -720,30 +721,32 @@ local function createToggle(text, defaultState, callback)
     tLabel.TextSize = 13
     tLabel.TextXAlignment = Enum.TextXAlignment.Left
     tLabel.Parent = toggleFrame
-    
+
     local tBtn = Instance.new("TextButton")
     tBtn.Size = UDim2.new(0, 50, 0, 24)
     tBtn.Position = UDim2.new(1, -60, 0.5, -12)
-    tBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 80)
-    if not defaultState then
+    if defaultState then
+        tBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 80)
+    else
         tBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
     end
     tBtn.BorderSizePixel = 0
-    tBtn.Text = "OFF"
     if defaultState then
         tBtn.Text = "ON"
+    else
+        tBtn.Text = "OFF"
     end
     tBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     tBtn.Font = Enum.Font.GothamBold
     tBtn.TextSize = 11
     tBtn.Parent = toggleFrame
-    
+
     local bc = Instance.new("UICorner")
     bc.CornerRadius = UDim.new(0, 6)
     bc.Parent = tBtn
-    
+
     local state = defaultState
-    
+
     tBtn.MouseButton1Click:Connect(function()
         state = not state
         if state then
@@ -755,7 +758,7 @@ local function createToggle(text, defaultState, callback)
         end
         callback(state)
     end)
-    
+
     return toggleFrame
 end
 
@@ -764,11 +767,11 @@ local function createSlider(text, minVal, maxVal, defaultVal, callback)
     sliderFrame.Size = UDim2.new(1, 0, 0, 50)
     sliderFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     sliderFrame.BorderSizePixel = 0
-    
+
     local sc = Instance.new("UICorner")
     sc.CornerRadius = UDim.new(0, 8)
     sc.Parent = sliderFrame
-    
+
     local sLabel = Instance.new("TextLabel")
     sLabel.Size = UDim2.new(1, -20, 0, 20)
     sLabel.Position = UDim2.new(0, 10, 0, 5)
@@ -779,42 +782,42 @@ local function createSlider(text, minVal, maxVal, defaultVal, callback)
     sLabel.TextSize = 12
     sLabel.TextXAlignment = Enum.TextXAlignment.Left
     sLabel.Parent = sliderFrame
-    
+
     local bar = Instance.new("Frame")
     bar.Size = UDim2.new(1, -20, 0, 6)
     bar.Position = UDim2.new(0, 10, 0, 35)
     bar.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
     bar.BorderSizePixel = 0
-    
+
     local barC = Instance.new("UICorner")
     barC.CornerRadius = UDim.new(0, 3)
     barC.Parent = bar
-    
+
     local fill = Instance.new("Frame")
     fill.Size = UDim2.new((defaultVal - minVal) / (maxVal - minVal), 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(100, 80, 255)
     fill.BorderSizePixel = 0
-    
+
     local fillC = Instance.new("UICorner")
     fillC.CornerRadius = UDim.new(0, 3)
     fillC.Parent = fill
-    
+
     local knob = Instance.new("Frame")
     knob.Size = UDim2.new(0, 16, 0, 16)
     knob.Position = UDim2.new(fill.Size.X.Scale, -8, 0.5, -8)
     knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     knob.BorderSizePixel = 0
-    
+
     local knobC = Instance.new("UICorner")
     knobC.CornerRadius = UDim.new(1, 0)
     knobC.Parent = knob
-    
+
     fill.Parent = bar
     knob.Parent = bar
     bar.Parent = sliderFrame
-    
+
     local dragging = false
-    
+
     local function updateSlider(inputPos)
         local relative = (inputPos.X - bar.AbsolutePosition.X) / bar.AbsoluteSize.X
         relative = math.clamp(relative, 0, 1)
@@ -824,29 +827,31 @@ local function createSlider(text, minVal, maxVal, defaultVal, callback)
         sLabel.Text = text .. ": " .. tostring(value)
         callback(value)
     end
-    
+
     bar.InputBegan:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 
+        if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             dragging = true
             updateSlider(input.Position)
         end
     end)
-    
+
     UserInputService.InputEnded:Connect(function(input)
-        if input.UserInputType == Enum.UserInputType.MouseButton1 
+        if input.UserInputType == Enum.UserInputType.MouseButton1
         or input.UserInputType == Enum.UserInputType.Touch then
             dragging = false
         end
     end)
-    
+
     UserInputService.InputChanged:Connect(function(input)
-        if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement 
-        or input.UserInputType == Enum.UserInputType.Touch) then
-            updateSlider(input.Position)
+        if dragging then
+            if input.UserInputType == Enum.UserInputType.MouseMovement
+            or input.UserInputType == Enum.UserInputType.Touch then
+                updateSlider(input.Position)
+            end
         end
     end)
-    
+
     return sliderFrame
 end
 
@@ -922,12 +927,12 @@ local function refreshDropdown()
             child:Destroy()
         end
     end
-    
+
     local playersList = getValidPlayers()
     local count = math.min(#playersList, 8)
     DropdownList.Size = UDim2.new(1, 0, 0, count * 32 + 8)
     DropdownContainer.Size = UDim2.new(1, 0, 0, count * 32 + 8)
-    
+
     for _, player in ipairs(playersList) do
         local item = Instance.new("TextButton")
         item.Size = UDim2.new(1, 0, 0, 30)
@@ -935,11 +940,11 @@ local function refreshDropdown()
         item.BorderSizePixel = 0
         item.Text = ""
         item.ZIndex = 101
-        
+
         local itemC = Instance.new("UICorner")
         itemC.CornerRadius = UDim.new(0, 6)
         itemC.Parent = item
-        
+
         local itemLabel = Instance.new("TextLabel")
         itemLabel.Size = UDim2.new(1, -10, 1, 0)
         itemLabel.Position = UDim2.new(0, 10, 0, 0)
@@ -950,7 +955,7 @@ local function refreshDropdown()
         itemLabel.TextXAlignment = Enum.TextXAlignment.Left
         itemLabel.ZIndex = 102
         itemLabel.Parent = item
-        
+
         local _, _, root = getCharacter(player)
         local _, _, localRoot = getCharacter(LocalPlayer)
         local dist = 0
@@ -960,7 +965,7 @@ local function refreshDropdown()
         local level = getPlayerLevel(player)
         local bounty = getPlayerBounty(player)
         local inPvP = isPlayerInPvP(player)
-        
+
         local infoText = player.Name .. " | Lv." .. level
         if bounty > 0 then
             infoText = infoText .. " | B:" .. formatNumber(bounty)
@@ -969,9 +974,9 @@ local function refreshDropdown()
         if inPvP then
             infoText = infoText .. " | [PvP]"
         end
-        
+
         itemLabel.Text = infoText
-        
+
         item.MouseButton1Click:Connect(function()
             State.SelectedPlayer = player
             PlayerDropdown.Text = "  " .. infoText
@@ -979,7 +984,7 @@ local function refreshDropdown()
             dropdownOpen = false
             DropdownContainer.Size = UDim2.new(1, 0, 0, 0)
         end)
-        
+
         item.Parent = DropdownList
     end
 end
@@ -1119,7 +1124,7 @@ local dragStart = nil
 local startPos = nil
 
 TitleBar.InputBegan:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 
+    if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         dragging = true
         dragStart = input.Position
@@ -1128,22 +1133,24 @@ TitleBar.InputBegan:Connect(function(input)
 end)
 
 TitleBar.InputEnded:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseButton1 
+    if input.UserInputType == Enum.UserInputType.MouseButton1
     or input.UserInputType == Enum.UserInputType.Touch then
         dragging = false
     end
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement 
-    or input.UserInputType == Enum.UserInputType.Touch) then
-        local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(
-            startPos.X.Scale, 
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale, 
-            startPos.Y.Offset + delta.Y
-        )
+    if dragging then
+        if input.UserInputType == Enum.UserInputType.MouseMovement
+        or input.UserInputType == Enum.UserInputType.Touch then
+            local delta = input.Position - dragStart
+            MainFrame.Position = UDim2.new(
+                startPos.X.Scale,
+                startPos.X.Offset + delta.X,
+                startPos.Y.Scale,
+                startPos.Y.Offset + delta.Y
+            )
+        end
     end
 end)
 
@@ -1197,12 +1204,12 @@ task.spawn(function()
                 LockBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
             end
         end
-        
+
         if State.LockedPlayer and not isPlayerAlive(State.LockedPlayer) then
             lockTarget(nil)
             LockBtn.Text = "LOCK TARGET"
             LockBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 80)
-            
+
             if State.Agnes 2.5 FlashLockEnabled then
                 task.wait(1)
                 local target = findBestTarget()
@@ -1227,18 +1234,18 @@ table.insert(State.Connections, antiAfkConn)
 -- Mobile tap to select
 UserInputService.TouchTap:Connect(function(touchPositions)
     if not touchPositions or #touchPositions == 0 then return end
-    
+
     local tapPos = touchPositions[1]
     local camera = Workspace.CurrentCamera
     if not camera then return end
-    
+
     local rayParams = RaycastParams.new()
     rayParams.FilterType = Enum.RaycastFilterType.Exclude
     rayParams.FilterDescendantsInstances = { LocalPlayer.Character }
-    
+
     local ray = camera:ViewportPointToRay(tapPos.X, tapPos.Y)
     local result = Workspace:Raycast(ray.Origin, ray.Direction * 1000, rayParams)
-    
+
     if result and result.Instance then
         local model = result.Instance:FindFirstAncestorOfClass("Model")
         if model then
@@ -1258,5 +1265,5 @@ UserInputService.TouchTap:Connect(function(touchPositions)
     end
 end)
 
-notify("Bluezy Bounty Hunter", "v2.0 โหลดสำเร็จ!")
-print("[Bluezy Bounty Hunter v2.0] Loaded successfully.")
+notify("Bluezy Bounty Hunter", "v3.0 โหลดสำเร็จ!")
+print("[Bluezy Bounty Hunter v3.0] Loaded successfully.")
