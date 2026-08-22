@@ -1,27 +1,15 @@
 --[[
-    BluezyGPT Bounty Hunter v1.1
-    เกม: Blox Fruits (Roblox)
-    รองรับ: Mobile + PC (Delta, Arceus X, Hydrogen, Delta PC, Synapse, etc.)
-    แก้บั๊ก: ตัวแปรผิด syntax, continue statement, parenting issues
-    
-    วิธีใช้:
-    1. เข้าเกม Blox Fruits
-    2. รันสคริปต์ผ่าน Executor
-    3. เลือกผู้เล่นจาก Dropdown หรือเปิด Agnes 2.5 Flash Lock
-    4. กด Lock เพื่อล็อคเป้า ระบบบินไปฆ่าให้อัตโนมัติ
+    BluezyGPT Bounty Hunter v1.2
+    Blox Fruits (Roblox) — Mobile + PC
+    แก้ไขครบทุกบั๊ก syntax ที่ทำให้รันไม่ได้
 ]]
 
--- ============================================
--- Services
--- ============================================
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
-local TweenService = game:GetService("TweenService")
 local VirtualUser = game:GetService("VirtualUser")
 local StarterGui = game:GetService("StarterGui")
-local CoreGui = game:GetService("CoreGui")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -191,7 +179,6 @@ local function createESP(player)
     corner.Parent = frame
     
     local nameLabel = Instance.new("TextLabel")
-    nameLabel.Name = "NameLabel"
     nameLabel.Size = UDim2.new(1, -10, 0, 22)
     nameLabel.Position = UDim2.new(0, 5, 0, 2)
     nameLabel.BackgroundTransparency = 1
@@ -202,7 +189,6 @@ local function createESP(player)
     nameLabel.TextXAlignment = Enum.TextXAlignment.Left
     
     local levelLabel = Instance.new("TextLabel")
-    levelLabel.Name = "LevelLabel"
     levelLabel.Size = UDim2.new(1, -10, 0, 18)
     levelLabel.Position = UDim2.new(0, 5, 0, 24)
     levelLabel.BackgroundTransparency = 1
@@ -213,7 +199,6 @@ local function createESP(player)
     levelLabel.TextXAlignment = Enum.TextXAlignment.Left
     
     local healthBarBG = Instance.new("Frame")
-    healthBarBG.Name = "HealthBarBG"
     healthBarBG.Size = UDim2.new(1, -10, 0, 8)
     healthBarBG.Position = UDim2.new(0, 5, 0, 44)
     healthBarBG.BackgroundColor3 = Color3.fromRGB(40, 40, 40)
@@ -224,7 +209,6 @@ local function createESP(player)
     healthCorner.Parent = healthBarBG
     
     local healthBarFill = Instance.new("Frame")
-    healthBarFill.Name = "HealthBarFill"
     healthBarFill.Size = UDim2.new(1, 0, 1, 0)
     healthBarFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
     healthBarFill.BorderSizePixel = 0
@@ -234,7 +218,6 @@ local function createESP(player)
     fillCorner.Parent = healthBarFill
     
     local distLabel = Instance.new("TextLabel")
-    distLabel.Name = "DistLabel"
     distLabel.Size = UDim2.new(1, -10, 0, 16)
     distLabel.Position = UDim2.new(0, 5, 0, 56)
     distLabel.BackgroundTransparency = 1
@@ -317,12 +300,11 @@ local function updateESP()
                 end
                 
                 esp.NameLabel.TextColor3 = nameColor
-                esp.NameLabel.Text = player.Name
                 
                 if bounty > 0 then
-                    esp.LevelLabel.Text = string.format("Bounty: %s | HP: %d%%", formatNumber(bounty), hp)
+                    esp.LevelLabel.Text = "Bounty: " .. formatNumber(bounty) .. " | HP: " .. hp .. "%"
                 else
-                    esp.LevelLabel.Text = string.format("Level: %d | HP: %d%%", level, hp)
+                    esp.LevelLabel.Text = "Level: " .. level .. " | HP: " .. hp .. "%"
                 end
                 
                 esp.HealthFill.Size = UDim2.new(hp / 100, 0, 1, 0)
@@ -335,7 +317,7 @@ local function updateESP()
                 end
                 
                 local pvpText = inPvP and "PvP: ON" or "PvP: OFF"
-                esp.DistLabel.Text = string.format("Dist: %dm | %s", math.floor(dist), pvpText)
+                esp.DistLabel.Text = "Dist: " .. math.floor(dist) .. "m | " .. pvpText
                 
                 if State.LockedPlayer == player then
                     esp.LevelLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
@@ -395,7 +377,7 @@ local function startFlyToTarget()
         end
         
         local targetPos = targetRoot.Position + Vector3.new(0, Config.FlyHeight, 0)
-        local direction = (targetPos - localRoot.Position)
+        local direction = targetPos - localRoot.Position
         local distance = direction.Magnitude
         
         if distance > 2 then
@@ -414,7 +396,7 @@ local function startFlyToTarget()
             bodyVel.Velocity = flyVel
             
             local lookPos = targetRoot.Position
-            local lookDir = (lookPos - localRoot.Position)
+            local lookDir = lookPos - localRoot.Position
             if lookDir.Magnitude > 0.1 then
                 local lookCFrame = CFrame.lookAt(localRoot.Position, Vector3.new(lookPos.X, localRoot.Position.Y, lookPos.Z))
                 localRoot.CFrame = localRoot.CFrame:Lerp(lookCFrame, 0.3)
@@ -474,7 +456,6 @@ local function useSkill(skillKey)
             end
         end
         
-        -- fallback: ลอง CommCtrl
         local comm = ReplicatedStorage:FindFirstChild("Comm")
         if comm then
             local commE = comm:FindFirstChild("CommE")
@@ -593,15 +574,14 @@ local function findBestTarget()
 end
 
 -- ============================================
--- UI
+-- UI System
 -- ============================================
 
--- หา parent ที่ใช้ได้
 local function getGuiParent()
-    local success, result = pcall(function()
-        return CoreGui
+    local ok, result = pcall(function()
+        return game:GetService("CoreGui")
     end)
-    if success and result then
+    if ok and result then
         return result
     end
     return LocalPlayer:WaitForChild("PlayerGui")
@@ -615,14 +595,12 @@ ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
 ScreenGui.Parent = guiParent
 
--- Main Frame
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
 MainFrame.Size = UDim2.new(0, 420, 0, 520)
 MainFrame.Position = UDim2.new(0.5, -210, 0.5, -260)
 MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
 MainFrame.BorderSizePixel = 0
-MainFrame.Active = true
 
 local mainCorner = Instance.new("UICorner")
 mainCorner.CornerRadius = UDim.new(0, 12)
@@ -641,7 +619,6 @@ stroke.Color = Color3.fromRGB(100, 50, 255)
 stroke.Thickness = 2
 stroke.Parent = MainFrame
 
--- Title bar
 local TitleBar = Instance.new("Frame")
 TitleBar.Name = "TitleBar"
 TitleBar.Size = UDim2.new(1, 0, 0, 40)
@@ -657,7 +634,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -80, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "Bluezy Bounty Hunter v1.1"
+TitleLabel.Text = "Bluezy Bounty Hunter v1.2"
 TitleLabel.TextColor3 = Color3.fromRGB(150, 100, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 16
@@ -694,7 +671,6 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 6)
 closeCorner.Parent = CloseBtn
 
--- Scroll Frame สำหรับ content
 local ContentScroll = Instance.new("ScrollingFrame")
 ContentScroll.Size = UDim2.new(1, -20, 1, -50)
 ContentScroll.Position = UDim2.new(0, 10, 0, 45)
@@ -877,7 +853,6 @@ end
 -- Build UI
 -- ============================================
 
--- Section: Target
 createSectionLabel("เลือกเป้าหมาย").Parent = ContentScroll
 
 local PlayerDropdown = Instance.new("TextButton")
@@ -896,7 +871,6 @@ ddCorner.Parent = PlayerDropdown
 
 PlayerDropdown.Parent = ContentScroll
 
--- Dropdown container (แยกออกมาเป็น frame ต่างหาก)
 local DropdownContainer = Instance.new("Frame")
 DropdownContainer.Size = UDim2.new(1, 0, 0, 0)
 DropdownContainer.BackgroundTransparency = 1
@@ -971,11 +945,11 @@ local function refreshDropdown()
         local bounty = getPlayerBounty(player)
         local inPvP = isPlayerInPvP(player)
         
-        local infoText = string.format("%s | Lv.%d", player.Name, level)
+        local infoText = player.Name .. " | Lv." .. level
         if bounty > 0 then
-            infoText = infoText .. string.format(" | B:%s", formatNumber(bounty))
+            infoText = infoText .. " | B:" .. formatNumber(bounty)
         end
-        infoText = infoText .. string.format(" | %dm", math.floor(dist))
+        infoText = infoText .. " | " .. math.floor(dist) .. "m"
         if inPvP then
             infoText = infoText .. " | [PvP]"
         end
@@ -1004,7 +978,6 @@ PlayerDropdown.MouseButton1Click:Connect(function()
     end
 end)
 
--- Refresh button
 local RefreshBtn = Instance.new("TextButton")
 RefreshBtn.Size = UDim2.new(1, 0, 0, 32)
 RefreshBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
@@ -1026,7 +999,6 @@ RefreshBtn.MouseButton1Click:Connect(function()
     dropdownOpen = true
 end)
 
--- Lock button
 local LockBtn = Instance.new("TextButton")
 LockBtn.Size = UDim2.new(1, 0, 0, 40)
 LockBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 80)
@@ -1058,7 +1030,6 @@ LockBtn.MouseButton1Click:Connect(function()
     end
 end)
 
--- Section: Features
 createSectionLabel("ฟีเจอร์").Parent = ContentScroll
 
 local espToggleFrame = createToggle("ESP แสดงสถานะผู้เล่น", true, function(state)
@@ -1076,7 +1047,6 @@ local skillToggleFrame = createToggle("ใช้สกิลใน Combo", true,
 end)
 skillToggleFrame.Parent = ContentScroll
 
--- Sliders
 local flySpeedSlider = createSlider("ความเร็วบิน", 50, 500, Config.FlySpeed, function(val)
     Config.FlySpeed = val
 end)
@@ -1092,7 +1062,10 @@ local cooldownSlider = createSlider("หน่วง M1 (ms)", 50, 500, Config.A
 end)
 cooldownSlider.Parent = ContentScroll
 
--- Minimize
+-- ============================================
+-- Minimize / Close
+-- ============================================
+
 local minimized = false
 local originalSize = MainFrame.Size
 
@@ -1129,18 +1102,6 @@ local dragging = false
 local dragStart = nil
 local startPos = nil
 
-local function updateDrag(input)
-    if dragging then
-        local delta = input.Position - dragStart
-        MainFrame.Position = UDim2.new(
-            startPos.X.Scale, 
-            startPos.X.Offset + delta.X,
-            startPos.Y.Scale, 
-            startPos.Y.Offset + delta.Y
-        )
-    end
-end
-
 TitleBar.InputBegan:Connect(function(input)
     if input.UserInputType == Enum.UserInputType.MouseButton1 
     or input.UserInputType == Enum.UserInputType.Touch then
@@ -1158,9 +1119,15 @@ TitleBar.InputEnded:Connect(function(input)
 end)
 
 UserInputService.InputChanged:Connect(function(input)
-    if input.UserInputType == Enum.UserInputType.MouseMovement 
-    or input.UserInputType == Enum.UserInputType.Touch then
-        updateDrag(input)
+    if dragging and (input.UserInputType == Enum.UserInputType.MouseMovement 
+    or input.UserInputType == Enum.UserInputType.Touch) then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale, 
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale, 
+            startPos.Y.Offset + delta.Y
+        )
     end
 end)
 
@@ -1195,7 +1162,6 @@ end)
 -- Loops
 -- ============================================
 
--- ESP update
 task.spawn(function()
     while task.wait(Config.ESPUpdateRate) do
         if State.ESPEnabled then
@@ -1204,7 +1170,6 @@ task.spawn(function()
     end
 end)
 
--- Agnes 2.5 Flash lock + target check
 task.spawn(function()
     while task.wait(Config.TargetRefreshRate) do
         if State.Agnes 2.5 FlashLockEnabled and not State.LockedPlayer then
@@ -1268,12 +1233,11 @@ UserInputService.TouchTap:Connect(function(touchPositions)
                 local _, _, localRoot = getCharacter(LocalPlayer)
                 local dist = (root and localRoot) and getDistance(root, localRoot) or 0
                 local level = getPlayerLevel(player)
-                PlayerDropdown.Text = string.format("  %s | Lv.%d | %dm", player.Name, level, math.floor(dist))
+                PlayerDropdown.Text = "  " .. player.Name .. " | Lv." .. level .. " | " .. math.floor(dist) .. "m"
             end
         end
     end
 end)
 
-notify("Bluezy Bounty Hunter", "v1.1 โหลดสำเร็จ! แก้บั๊กหมดแล้ว")
-
-print("[Bluezy Bounty Hunter v1.1] Loaded successfully.")
+notify("Bluezy Bounty Hunter", "v1.2 โหลดสำเร็จ!")
+print("[Bluezy Bounty Hunter v1.2] Loaded successfully.")
