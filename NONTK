@@ -1,6 +1,5 @@
--- [[ NONTK BOUNTY HUNTER v107 — ROCK-SOLID ZERO-BUG EDITION ]] --
--- Universal Support: PC & Mobile (Delta, Codex, Fluxus, Arceus, Solara, Wave)
--- Features: Stable Smooth Flight | 100% True Hit Registration | Auto-Equip & Buso Haki | Universal Clean UI
+-- [[ NONTK BOUNTY HUNTER v108 — APEX BOUNTY HARVESTER & ZERO-LOSS MATRIX ]] --
+-- Master Strategy: 100% Bounty Yield Filter | Zero-Loss Sky Vault Safety | Kill-Cap Blacklist | Safe Server Hop
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -9,6 +8,8 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local TeleportService = game:GetService("TeleportService")
+local HttpService = game:GetService("HttpService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -22,42 +23,51 @@ local IsMobile = UserInputService.TouchEnabled and not UserInputService.Keyboard
 -- [[ CONFIGURATION ]] --
 local Config = {
     Enabled = false,
+    AutoHuntLoop = true,         -- ระบบล่าค่าหัวอัตโนมัติ วนหาเหยื่อใหม่อัตโนมัติ
+    AutoServerHop = false,       -- ย้ายเซิร์ฟเวอร์อัตโนมัติเมื่อล่าหมดเซิร์ฟ
     SelectedPlayer = nil,
-    AutoTargetNearest = false,
     Spectate = false,
     
-    -- Smooth Flight & Positioning
-    FlySpeed = 300,             -- ความเร็วบินพุ่งเกาะหัว (เสถียรที่สุด 250 - 350)
-    OverheadDistance = 4.5,     -- ระยะ 4.5 studs เหนือหัว (เข้า Hitbox ทุกอาวุธแน่นอน)
+    -- Zero-Loss Safety Engine (ระบบป้องกันเสียค่าหัว 100%)
+    AutoEscapeLowHP = true,
+    EscapeHPPercent = 30,        -- เลือดต่ำกว่า 30% พุ่งขึ้นฟ้าทันที
+    SkyVaultHeight = 1800,       -- บินหลบขึ้นเพดานฟ้า 1,800 studs
+    SafeRecoverHPPercent = 85,   -- เลือดฟื้นเกิน 85% ถึงจะลงมาสู้ต่อ
     
-    -- Combat & Hit Registration
+    -- Target Filter Matrix
+    MaxKillsPerPlayer = 3,       -- ฆ่าคนเดิมได้สูงสุด 3 ครั้งต่อเซิร์ฟเวอร์ (เกินนี้ไม่ได้ค่าหัว)
+    MaxLevelDifference = 350,    -- กรองเฉพาะคนที่มีสิทธิ์ได้ค่าหัว
+    
+    -- Flight & Kinetic Anchor
+    FlySpeed = 320,
+    OverheadDistance = 4.5,      -- ระยะ 4.5 studs เหนือหัว (Hitbox เข้า 100%)
+    
+    -- Combat & True Damage
     FastAttack = true,
     FastAttackBurst = 3,
-    AttackRadius = 60,
-    AutoHaki = true,            -- เปิดฮาคิเกราะอัตโนมัติ (จำเป็นต่อการตีโรเกีย)
+    AttackRadius = 65,
+    AutoHaki = true,
     AutoKen = true,
     AutoPvP = true,
     AutoRaceV4 = true,
     SkillSpam = true,
     Skills = {"Z", "X", "C", "V"},
     Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.35,
+    WeaponSwitchDelay = 0.32,
     
-    -- Defense & Godmode
+    -- Godmode Defense
     GodmodeDefense = true,
     AntiKnockback = true,
     AntiStun = true,
     AntiRagdoll = true,
-    AutoEscapeLowHP = true,
-    EscapeHPPercent = 20,
     AntiVoid = true,
     
-    -- ESP Visuals
+    -- Visuals
     ESPEnabled = true,
     ESPChams = true
 }
 
--- Runtime Variables
+-- Runtime State
 local FlightBV = nil
 local FlightBG = nil
 local CombatFramework = nil
@@ -68,8 +78,12 @@ local LastHakiCheck = 0
 local LastAttackTick = 0
 local CurrentWeaponIndex = 1
 local ESPObjects = {}
-local IsEscaping = false
 local RefreshPList = nil
+
+-- Bounty & Kill Tracking
+local KillCounter = {}           -- [PlayerName] = KillCount
+local SessionBountyKills = 0
+local IsInEmergencyState = false
 
 -- [[ REMOTES RESOLVER ]] --
 local function GetRemotes()
@@ -124,12 +138,29 @@ local function GetPlayerLevel(p)
     return 0
 end
 
+local function GetPlayerBounty(p)
+    if not p then return 0 end
+    local ls = p:FindFirstChild("leaderstats")
+    if ls then
+        local b = ls:FindFirstChild("Bounty/Honor") or ls:FindFirstChild("Bounty") or ls:FindFirstChild("Honor")
+        if b then return tonumber(b.Value) or 0 end
+    end
+    return 0
+end
+
 local function GetPlayerHealth(p)
     if p and p.Character then
         local hum = p.Character:FindFirstChildOfClass("Humanoid")
         if hum then return math.floor(hum.Health), math.floor(hum.MaxHealth) end
     end
     return 0, 0
+end
+
+local function IsInCombat()
+    if not Character then return false end
+    return Character:FindFirstChild("InCombat") ~= nil 
+        or LocalPlayer:GetAttribute("InCombat") == true 
+        or Character:GetAttribute("InCombat") == true
 end
 
 -- [[ SPECTATE SPY CAM ]] --
@@ -146,13 +177,14 @@ local function UpdateSpectateCamera()
     end
 end
 
--- [[ COMBAT STATE ]] --
+-- [[ COMPREHENSIVE COMBAT & BOUNTY ELIGIBILITY CHECK ]] --
 local function GetPlayerCombatState(p)
     local state = {
         IsAttackable = false,
+        IsBountyEligible = false,
         Badge = "[⚔️ READY]",
         Color = Color3.fromRGB(0, 255, 130),
-        Details = { Health = 0, MaxHealth = 0, Level = 0, Distance = 9999 }
+        Details = { Health = 0, MaxHealth = 0, Level = 0, Bounty = 0, Distance = 9999 }
     }
 
     if not p or p == LocalPlayer or not p.Parent then
@@ -179,6 +211,7 @@ local function GetPlayerCombatState(p)
     state.Details.Health = math.floor(hum.Health)
     state.Details.MaxHealth = math.floor(hum.MaxHealth)
     state.Details.Level = GetPlayerLevel(p)
+    state.Details.Bounty = GetPlayerBounty(p)
     if RootPart then
         state.Details.Distance = math.floor((RootPart.Position - hrp.Position).Magnitude)
     end
@@ -189,12 +222,14 @@ local function GetPlayerCombatState(p)
         return state
     end
 
+    -- ตรวจสอบเกราะเกิด
     if char:FindFirstChildOfClass("ForceField") or char:FindFirstChild("SafeZoneShield") or char:FindFirstChild("SpawnShield") then
         state.Badge = "[✨ SHIELD]"
         state.Color = Color3.fromRGB(255, 215, 0)
         return state
     end
 
+    -- ตรวจสอบเซฟโซน
     local inSafeZone = char:FindFirstChild("SafeZone") ~= nil 
         or char:FindFirstChild("InSafeZone") ~= nil 
         or p:FindFirstChild("SafeZone") ~= nil 
@@ -207,6 +242,7 @@ local function GetPlayerCombatState(p)
         return state
     end
 
+    -- ตรวจสอบปิด PvP
     local pvpOff = char:FindFirstChild("PvPDisabled") ~= nil 
         or p:FindFirstChild("PvPDisabled") ~= nil 
         or char:GetAttribute("PvPDisabled") == true 
@@ -218,33 +254,87 @@ local function GetPlayerCombatState(p)
         return state
     end
 
+    -- ตรวจสอบโควต้าการฆ่า (Blacklist)
+    local kills = KillCounter[p.Name] or 0
+    if kills >= Config.MaxKillsPerPlayer then
+        state.Badge = "[🛑 KILL CAP]"
+        state.Color = Color3.fromRGB(255, 140, 0)
+        return state
+    end
+
+    -- ตรวจสอบสิทธิ์ได้รับค่าหัว
+    local myLevel = GetPlayerLevel(LocalPlayer)
+    local targetLevel = state.Details.Level
+    if myLevel > 0 and targetLevel > 0 and math.abs(myLevel - targetLevel) > Config.MaxLevelDifference and (myLevel < 2500 or targetLevel < 2000) then
+        state.Badge = "[⚠️ NO BOUNTY]"
+        state.Color = Color3.fromRGB(220, 180, 50)
+        return state
+    end
+
     state.IsAttackable = true
-    state.Badge = "[⚔️ PVP ON]"
+    state.IsBountyEligible = true
+    state.Badge = "[⚔️ BOUNTY ON]"
     state.Color = Color3.fromRGB(0, 255, 130)
     return state
 end
 
--- [[ AUTO TARGET NEAREST ]] --
-local function FindBestTarget()
-    if not Config.AutoTargetNearest or Config.SelectedPlayer then return end
-    local closest, closestDist = nil, math.huge
+-- [[ APEX SMART TARGET HARVESTER ]] --
+local function FindBestBountyTarget()
+    if not Config.AutoHuntLoop or Config.SelectedPlayer then return end
+    
+    local bestTarget = nil
+    local bestScore = -math.huge
+    local myPos = RootPart and RootPart.Position or Vector3.zero
+
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer and p.Character then
-            local hum = p.Character:FindFirstChildOfClass("Humanoid")
-            local hrp = SafeGetHRP(p.Character)
-            if hum and hum.Health > 0 and hrp and RootPart then
-                local dist = (RootPart.Position - hrp.Position).Magnitude
-                if dist < closestDist then
-                    closestDist = dist
-                    closest = p
+            local st = GetPlayerCombatState(p)
+            if st.IsAttackable and st.IsBountyEligible then
+                local hum = p.Character:FindFirstChildOfClass("Humanoid")
+                local hrp = SafeGetHRP(p.Character)
+                if hum and hum.Health > 0 and hrp then
+                    local dist = (myPos - hrp.Position).Magnitude
+                    local hpRatio = hum.Health / math.max(1, hum.MaxHealth)
+                    
+                    -- สูตรคะแนน: เลือดน้อย + ระยะใกล้ + ค่าหัวเยอะ = เป้าหมายอันดับ 1
+                    local score = (1000 - dist) + ((1 - hpRatio) * 500) + (math.min(st.Details.Bounty, 5000000) / 10000)
+                    if score > bestScore then
+                        bestScore = score
+                        bestTarget = p
+                    end
                 end
             end
         end
     end
-    if closest then
-        Config.SelectedPlayer = closest
+
+    if bestTarget then
+        Config.SelectedPlayer = bestTarget
         if RefreshPList then RefreshPList() end
     end
+end
+
+-- [[ SAFE SERVER HOPPING ENGINE ]] --
+local function SafeServerHop()
+    if not Config.AutoServerHop then return end
+    
+    -- กฎเหล็ก: ห้าม Hop ขณะติดสถานะ Combat Tag เด็ดขาด (ระบบเกมจะริบค่าหัว)
+    if IsInCombat() then return end
+
+    pcall(function()
+        local placeId = game.PlaceId
+        local serversApi = "https://games.roblox.com/v1/games/" .. placeId .. "/servers/Public?sortOrder=Asc&limit=100"
+        local raw = game:HttpGet(serversApi)
+        local data = HttpService:JSONDecode(raw)
+
+        if data and data.data then
+            for _, s in ipairs(data.data) do
+                if s.playing < s.maxPlayers and s.id ~= game.JobId then
+                    TeleportService:TeleportToPlaceInstance(placeId, s.id, LocalPlayer)
+                    break
+                end
+            end
+        end
+    end)
 end
 
 -- [[ BUFF ENGINE ]] --
@@ -295,8 +385,8 @@ local function TriggerRaceV4()
     end)
 end
 
--- [[ GODMODE / ANTI-STUN ENGINE ]] --
-local function ApplyGodmodeDefense()
+-- [[ ZERO-LOSS GODMODE & SKY VAULT DEFENSE ]] --
+local function ApplyZeroLossDefense()
     if not Character or not Humanoid or not RootPart then return end
 
     if Config.AntiStun or Config.AntiRagdoll then
@@ -320,27 +410,38 @@ local function ApplyGodmodeDefense()
         RootPart.AssemblyLinearVelocity = Vector3.zero
     end
 
+    -- ระบบ Sky Vault: เลือดต่ำกว่าเกณฑ์จะบินหลบขึ้นฟ้า 1,800 studs จนกว่าเลือดจะเต็ม
     if Config.AutoEscapeLowHP and Humanoid.Health > 0 then
         local hpPct = (Humanoid.Health / math.max(1, Humanoid.MaxHealth)) * 100
+        
         if hpPct <= Config.EscapeHPPercent then
-            IsEscaping = true
-            if FlightBV then FlightBV.Velocity = Vector3.new(0, 320, 0) end
-        else
-            IsEscaping = false
+            IsInEmergencyState = true
+        elseif hpPct >= Config.SafeRecoverHPPercent then
+            IsInEmergencyState = false
+        end
+
+        if IsInEmergencyState then
+            if FlightBV then
+                local skyPos = Vector3.new(RootPart.Position.X, Config.SkyVaultHeight, RootPart.Position.Z)
+                local delta = skyPos - RootPart.Position
+                FlightBV.Velocity = delta.Unit * 350
+            else
+                RootPart.CFrame = CFrame.new(RootPart.Position.X, Config.SkyVaultHeight, RootPart.Position.Z)
+            end
         end
     else
-        IsEscaping = false
+        IsInEmergencyState = false
     end
 end
 
--- [[ STABLE FLIGHT PHYSICS ]] --
+-- [[ FLIGHT PHYSICS ]] --
 local function SetupFlightPhysics()
     if not RootPart then return end
     
     if not FlightBV or FlightBV.Parent ~= RootPart then
         if FlightBV then FlightBV:Destroy() end
         FlightBV = Instance.new("BodyVelocity")
-        FlightBV.Name = "NONTK_StableVel"
+        FlightBV.Name = "NONTK_BountyVel"
         FlightBV.Velocity = Vector3.zero
         FlightBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
         FlightBV.P = 25000
@@ -350,7 +451,7 @@ local function SetupFlightPhysics()
     if not FlightBG or FlightBG.Parent ~= RootPart then
         if FlightBG then FlightBG:Destroy() end
         FlightBG = Instance.new("BodyGyro")
-        FlightBG.Name = "NONTK_StableGyro"
+        FlightBG.Name = "NONTK_BountyGyro"
         FlightBG.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
         FlightBG.P = 25000
         FlightBG.D = 100
@@ -365,9 +466,9 @@ local function ClearFlightPhysics()
     if Humanoid then Humanoid.PlatformStand = false end
 end
 
--- Universal Noclip
+-- Noclip
 RunService.Stepped:Connect(function()
-    if (Config.Enabled or Config.GodmodeDefense) and Character then
+    if (Config.Enabled or Config.GodmodeDefense or IsInEmergencyState) and Character then
         for _, part in ipairs(Character:GetDescendants()) do
             if part:IsA("BasePart") then
                 part.CanCollide = false
@@ -376,7 +477,7 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- [[ STABLE OVERHEAD GLUE (NO ROLLBACK / NO JITTER) ]] --
+-- [[ OVERHEAD TARGET ANCHOR ]] --
 local function MoveToTargetOverhead(targetHRP)
     SetupFlightPhysics()
     if not FlightBV or not FlightBG or not RootPart or not targetHRP then return end
@@ -386,14 +487,11 @@ local function MoveToTargetOverhead(targetHRP)
     local delta = targetPos - curPos
     local dist = delta.Magnitude
 
-    -- Turn to face downwards directly at target
     FlightBG.CFrame = CFrame.lookAt(curPos, targetHRP.Position)
 
     if dist > 8 then
-        -- บินพุ่งตรงไปหาด้วยความเร็วสูง
         FlightBV.Velocity = delta.Unit * Config.FlySpeed
     else
-        -- เกาะติดหนึบตรงหัว
         FlightBV.Velocity = (targetHRP.AssemblyLinearVelocity or Vector3.zero) + (delta.Unit * 30)
         RootPart.AssemblyLinearVelocity = Vector3.zero
         RootPart.AssemblyAngularVelocity = Vector3.zero
@@ -401,7 +499,7 @@ local function MoveToTargetOverhead(targetHRP)
     end
 end
 
--- [[ RELIABLE WEAPON & ATTACK SYSTEM ]] --
+-- [[ ATTACK & WEAPON ENGINE ]] --
 local function EnsureWeaponEquipped()
     if not Character or not Humanoid then return nil end
     local tool = Character:FindFirstChildOfClass("Tool")
@@ -446,7 +544,6 @@ local function ExecuteFastAttack(targetHRP)
     
     local currentTool = EnsureWeaponEquipped()
     
-    -- 1. Native CombatFramework Trigger
     pcall(function()
         if not ActiveController then SetupCombatHooks() end
         if ActiveController and typeof(ActiveController) == "table" then
@@ -464,7 +561,6 @@ local function ExecuteFastAttack(targetHRP)
         end
     end)
     
-    -- 2. Net Remotes Dispatch
     pcall(function()
         if GameRemotes.RegisterAttack then
             GameRemotes.RegisterAttack:FireServer(0)
@@ -477,7 +573,6 @@ local function ExecuteFastAttack(targetHRP)
         end
     end)
     
-    -- 3. Direct Tool Activation
     pcall(function()
         if currentTool then currentTool:Activate() end
         VirtualUser:CaptureController()
@@ -622,9 +717,9 @@ RunService.RenderStepped:Connect(function()
                 esp.Billboard.Enabled = true
 
                 esp.NameLabel.Text = string.format("%s [Lv.%d]", p.Name, st.Details.Level)
-                esp.StatusLabel.Text = isTarget and "[🎯 LOCKED]" or st.Badge
+                esp.StatusLabel.Text = isTarget and "[🎯 TARGET]" or st.Badge
                 esp.StatusLabel.TextColor3 = renderColor
-                esp.DistLabel.Text = string.format("%d studs | HP: %d/%d", st.Details.Distance, st.Details.Health, st.Details.MaxHealth)
+                esp.DistLabel.Text = string.format("%d studs | %s Bounty", st.Details.Distance, tostring(st.Details.Bounty))
 
                 local hpPct = math.clamp(hum.Health / math.max(1, hum.MaxHealth), 0, 1)
                 esp.HPBar.Size = UDim2.new(hpPct, 0, 1, 0)
@@ -640,27 +735,39 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- [[ MAIN COMBAT LOOP ]] --
+-- [[ MASTER HARVESTER & SAFETY COMBAT LOOP ]] --
 RunService.Heartbeat:Connect(function()
-    ApplyGodmodeDefense()
+    ApplyZeroLossDefense()
 
-    if not Config.Enabled or not RootPart or IsEscaping then 
-        ClearFlightPhysics()
+    if not Config.Enabled or not RootPart or IsInEmergencyState then 
+        if not IsInEmergencyState then ClearFlightPhysics() end
         return 
     end
 
     EnsureBuffs()
-    FindBestTarget()
+    FindBestBountyTarget()
 
     local target = Config.SelectedPlayer
     if target and target.Parent and target.Character then
         local tHRP = SafeGetHRP(target.Character)
         local tHum = target.Character:FindFirstChildOfClass("Humanoid")
 
+        -- เมื่อเป้าหมายตาย (เป้าหมายถูกกำจัดเรียบร้อย)
         if not tHum or tHum.Health <= 0 or not tHRP then
+            -- บันทึกสถิติการฆ่าเพื่อจำกัดโควต้า
+            KillCounter[target.Name] = (KillCounter[target.Name] or 0) + 1
+            SessionBountyKills = SessionBountyKills + 1
+            
             Config.SelectedPlayer = nil
             ClearFlightPhysics()
             if RefreshPList then RefreshPList() end
+            
+            -- ตรวจสอบว่ายังมีเหยื่อในเซิร์ฟเวอร์เหลือไหม
+            task.delay(1.0, function()
+                if Config.AutoServerHop and not Config.SelectedPlayer then
+                    SafeServerHop()
+                end
+            end)
             return
         end
 
@@ -681,6 +788,7 @@ RunService.Heartbeat:Connect(function()
     else
         ClearFlightPhysics()
         Config.SelectedPlayer = nil
+        if Config.AutoServerHop then SafeServerHop() end
     end
 end)
 
@@ -723,7 +831,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V107_ROCK_SOLID"
+    ScreenGui.Name = "NONTK_V108_HARVESTER"
     ScreenGui.ResetOnSpawn = false
     
     local parentGui = (gethui and gethui()) or (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or LocalPlayer:WaitForChild("PlayerGui")
@@ -745,8 +853,8 @@ local function BuildUI()
 
     -- Top Mini Status Pill
     local MiniBar = Instance.new("Frame", ScreenGui)
-    MiniBar.Size = UDim2.new(0, 280, 0, 36)
-    MiniBar.Position = UDim2.new(0.5, -140, 0.0, 12)
+    MiniBar.Size = UDim2.new(0, 290, 0, 36)
+    MiniBar.Position = UDim2.new(0.5, -145, 0.0, 12)
     MiniBar.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
     MiniBar.BorderSizePixel = 0
     Instance.new("UICorner", MiniBar).CornerRadius = UDim.new(0, 9)
@@ -769,7 +877,7 @@ local function BuildUI()
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 10.5
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "NONTK v107 | STABLE READY"
+    MiniLabel.Text = "NONTK v108 | HARVESTER READY"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 52, 1, -8)
@@ -783,7 +891,7 @@ local function BuildUI()
 
     -- Main Container Frame
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, IsMobile and 350 or 440, 0, IsMobile and 500 or 560)
+    Main.Size = UDim2.new(0, IsMobile and 350 or 440, 0, IsMobile and 510 or 570)
     Main.Position = UDim2.new(0.5, IsMobile and -175 or -220, 0.05, 0)
     Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     Main.BorderSizePixel = 0
@@ -808,7 +916,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11 or 12.5
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚡ NONTK v107 — ROCK SOLID PREDATOR"
+    HeaderTitle.Text = "⚡ NONTK v108 — APEX BOUNTY HARVESTER"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -867,8 +975,8 @@ local function BuildUI()
         return page, btn
     end
 
-    local LockPage = CreateTab("Target & Combat", "🎯", 0.0, 0.5)
-    local ConfigPage = CreateTab("Godmode & Modules", "⚙", 0.5, 0.5)
+    local LockPage = CreateTab("Harvester & Queue", "🎯", 0.0, 0.5)
+    local ConfigPage = CreateTab("Zero-Loss Defense", "🛡️", 0.5, 0.5)
 
     local function SwitchTab(tabName)
         for name, page in pairs(TabPages) do
@@ -882,198 +990,68 @@ local function BuildUI()
     for name, btn in pairs(TabButtons) do
         btn.MouseButton1Click:Connect(function() SwitchTab(name) end)
     end
-    SwitchTab("Target & Combat")
+    SwitchTab("Harvester & Queue")
 
-    -- [[ TAB 1: LOCK CONTROLLER ]] --
+    -- [[ TAB 1: HARVESTER CONTROLLER ]] --
     local LockMasterToggle = Instance.new("TextButton", LockPage)
     LockMasterToggle.Size = UDim2.new(1, 0, 0, 38)
     LockMasterToggle.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
     LockMasterToggle.TextColor3 = Color3.fromRGB(255, 255, 255)
     LockMasterToggle.Font = Enum.Font.GothamBold
     LockMasterToggle.TextSize = 12
-    LockMasterToggle.Text = "⏸ COMBAT SYSTEM: OFF"
+    LockMasterToggle.Text = "⏸ BOUNTY HARVESTER: OFF"
     Instance.new("UICorner", LockMasterToggle).CornerRadius = UDim.new(0, 7)
     LockMasterToggle.MouseButton1Click:Connect(function()
         Config.Enabled = not Config.Enabled
         LockMasterToggle.BackgroundColor3 = Config.Enabled and Color3.fromRGB(0, 170, 95) or Color3.fromRGB(30, 35, 50)
-        LockMasterToggle.Text = Config.Enabled and "▶ COMBAT SYSTEM: ACTIVE" or "⏸ COMBAT SYSTEM: OFF"
+        LockMasterToggle.Text = Config.Enabled and "▶ BOUNTY HARVESTER: ACTIVE" or "⏸ BOUNTY HARVESTER: OFF"
         if not Config.Enabled then ClearFlightPhysics() end
     end)
 
-    -- Speed Panel
-    local SpeedCard = Instance.new("Frame", LockPage)
-    SpeedCard.Size = UDim2.new(1, 0, 0, 108)
-    SpeedCard.BackgroundColor3 = Color3.fromRGB(16, 22, 30)
-    Instance.new("UICorner", SpeedCard).CornerRadius = UDim.new(0, 8)
-    local SpeedCardStroke = Instance.new("UIStroke", SpeedCard)
-    SpeedCardStroke.Color = Color3.fromRGB(0, 200, 140)
-    SpeedCardStroke.Thickness = 1.2
+    -- Auto Hunt Loop & Hop Row
+    local RowToggles = Instance.new("Frame", LockPage)
+    RowToggles.Size = UDim2.new(1, 0, 0, 32)
+    RowToggles.BackgroundTransparency = 1
 
-    local SpeedLabel = Instance.new("TextLabel", SpeedCard)
-    SpeedLabel.Size = UDim2.new(0.65, 0, 0, 22)
-    SpeedLabel.Position = UDim2.new(0, 10, 0, 6)
-    SpeedLabel.BackgroundTransparency = 1
-    SpeedLabel.TextColor3 = Color3.fromRGB(180, 255, 225)
-    SpeedLabel.Font = Enum.Font.GothamBold
-    SpeedLabel.TextSize = 11.5
-    SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-    SpeedLabel.Text = "⚡ FLY SPEED: " .. Config.FlySpeed .. " studs/s"
-
-    local SpeedInputBox = Instance.new("TextBox", SpeedCard)
-    SpeedInputBox.Size = UDim2.new(0, 64, 0, 22)
-    SpeedInputBox.Position = UDim2.new(1, -74, 0, 6)
-    SpeedInputBox.BackgroundColor3 = Color3.fromRGB(24, 34, 45)
-    SpeedInputBox.TextColor3 = Color3.fromRGB(255, 255, 255)
-    SpeedInputBox.Font = Enum.Font.GothamBold
-    SpeedInputBox.TextSize = 11
-    SpeedInputBox.Text = tostring(Config.FlySpeed)
-    Instance.new("UICorner", SpeedInputBox).CornerRadius = UDim.new(0, 4)
-
-    local STrack = Instance.new("Frame", SpeedCard)
-    STrack.Size = UDim2.new(0.72, 0, 0, 8)
-    STrack.Position = UDim2.new(0.14, 0, 0, 40)
-    STrack.BackgroundColor3 = Color3.fromRGB(30, 45, 55)
-    Instance.new("UICorner", STrack).CornerRadius = UDim.new(1, 0)
-
-    local SFill = Instance.new("Frame", STrack)
-    SFill.BackgroundColor3 = Color3.fromRGB(0, 220, 140)
-    SFill.BorderSizePixel = 0
-    SFill.Size = UDim2.new((Config.FlySpeed - 50) / 400, 0, 1, 0)
-    Instance.new("UICorner", SFill).CornerRadius = UDim.new(1, 0)
-
-    local SKnob = Instance.new("TextButton", STrack)
-    SKnob.Size = UDim2.new(0, 18, 0, 18)
-    SKnob.Position = UDim2.new((Config.FlySpeed - 50) / 400, -9, 0.5, -9)
-    SKnob.BackgroundColor3 = Color3.fromRGB(140, 255, 190)
-    SKnob.Text = ""
-    Instance.new("UICorner", SKnob).CornerRadius = UDim.new(1, 0)
-
-    local function SyncSpeedUI()
-        local ratio = math.clamp((Config.FlySpeed - 50) / 400, 0, 1)
-        SFill.Size = UDim2.new(ratio, 0, 1, 0)
-        SKnob.Position = UDim2.new(ratio, -9, 0.5, -9)
-        SpeedLabel.Text = "⚡ FLY SPEED: " .. Config.FlySpeed .. " studs/s"
-        SpeedInputBox.Text = tostring(Config.FlySpeed)
-    end
-
-    SpeedInputBox.FocusLost:Connect(function()
-        local n = tonumber(SpeedInputBox.Text)
-        if n then Config.FlySpeed = math.clamp(math.floor(n), 50, 450) end
-        SyncSpeedUI()
+    local AutoHuntBtn = Instance.new("TextButton", RowToggles)
+    AutoHuntBtn.Size = UDim2.new(0.5, -4, 1, 0)
+    AutoHuntBtn.Position = UDim2.new(0, 0, 0, 0)
+    AutoHuntBtn.BackgroundColor3 = Config.AutoHuntLoop and Color3.fromRGB(0, 130, 80) or Color3.fromRGB(20, 28, 40)
+    AutoHuntBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    AutoHuntBtn.Font = Enum.Font.GothamBold
+    AutoHuntBtn.TextSize = 10
+    AutoHuntBtn.Text = Config.AutoHuntLoop and "⚡ AUTO-QUEUE: ON" or "⚡ AUTO-QUEUE: OFF"
+    Instance.new("UICorner", AutoHuntBtn).CornerRadius = UDim.new(0, 6)
+    AutoHuntBtn.MouseButton1Click:Connect(function()
+        Config.AutoHuntLoop = not Config.AutoHuntLoop
+        AutoHuntBtn.BackgroundColor3 = Config.AutoHuntLoop and Color3.fromRGB(0, 130, 80) or Color3.fromRGB(20, 28, 40)
+        AutoHuntBtn.Text = Config.AutoHuntLoop and "⚡ AUTO-QUEUE: ON" or "⚡ AUTO-QUEUE: OFF"
     end)
 
-    local isDraggingSpeed = false
-    SKnob.MouseButton1Down:Connect(function() isDraggingSpeed = true end)
-    UserInputService.InputEnded:Connect(function(i)
-        if i.UserInputType == Enum.UserInputType.MouseButton1 or i.UserInputType == Enum.UserInputType.Touch then
-            isDraggingSpeed = false
-        end
-    end)
-    RunService.RenderStepped:Connect(function()
-        if isDraggingSpeed then
-            local mouse = LocalPlayer:GetMouse()
-            local ratio = math.clamp((mouse.X - STrack.AbsolutePosition.X) / STrack.AbsoluteSize.X, 0, 1)
-            Config.FlySpeed = math.floor(50 + ratio * 400)
-            SyncSpeedUI()
-        end
-    end)
-
-    local BtnMinusSpeed = Instance.new("TextButton", SpeedCard)
-    BtnMinusSpeed.Size = UDim2.new(0, 26, 0, 24)
-    BtnMinusSpeed.Position = UDim2.new(0, 8, 0, 32)
-    BtnMinusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 65)
-    BtnMinusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
-    BtnMinusSpeed.Font = Enum.Font.GothamBold
-    BtnMinusSpeed.TextSize = 14
-    BtnMinusSpeed.Text = "−"
-    Instance.new("UICorner", BtnMinusSpeed).CornerRadius = UDim.new(0, 4)
-    BtnMinusSpeed.MouseButton1Click:Connect(function()
-        Config.FlySpeed = math.max(50, Config.FlySpeed - 20)
-        SyncSpeedUI()
-    end)
-
-    local BtnPlusSpeed = Instance.new("TextButton", SpeedCard)
-    BtnPlusSpeed.Size = UDim2.new(0, 26, 0, 24)
-    BtnPlusSpeed.Position = UDim2.new(1, -34, 0, 32)
-    BtnPlusSpeed.BackgroundColor3 = Color3.fromRGB(35, 55, 65)
-    BtnPlusSpeed.TextColor3 = Color3.fromRGB(255, 255, 255)
-    BtnPlusSpeed.Font = Enum.Font.GothamBold
-    BtnPlusSpeed.TextSize = 14
-    BtnPlusSpeed.Text = "+"
-    Instance.new("UICorner", BtnPlusSpeed).CornerRadius = UDim.new(0, 4)
-    BtnPlusSpeed.MouseButton1Click:Connect(function()
-        Config.FlySpeed = math.min(450, Config.FlySpeed + 20)
-        SyncSpeedUI()
-    end)
-
-    local Presets = {
-        {Name = "220 (Safe)", Speed = 220},
-        {Name = "280 (Fast)", Speed = 280},
-        {Name = "300 (Apex)", Speed = 300},
-        {Name = "380 (Max)", Speed = 380}
-    }
-    for i, pData in ipairs(Presets) do
-        local pBtn = Instance.new("TextButton", SpeedCard)
-        pBtn.Size = UDim2.new(0.22, -4, 0, 24)
-        pBtn.Position = UDim2.new((i - 1) * 0.25, 6, 0, 74)
-        pBtn.BackgroundColor3 = Color3.fromRGB(25, 40, 50)
-        pBtn.TextColor3 = Color3.fromRGB(140, 230, 200)
-        pBtn.Font = Enum.Font.GothamBold
-        pBtn.TextSize = 9.5
-        pBtn.Text = pData.Name
-        Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 4)
-        pBtn.MouseButton1Click:Connect(function()
-            Config.FlySpeed = pData.Speed
-            SyncSpeedUI()
-        end)
-    end
-
-    -- Auto-Target & Spectate Row
-    local Row2 = Instance.new("Frame", LockPage)
-    Row2.Size = UDim2.new(1, 0, 0, 32)
-    Row2.BackgroundTransparency = 1
-
-    local AutoTargetBtn = Instance.new("TextButton", Row2)
-    AutoTargetBtn.Size = UDim2.new(0.5, -4, 1, 0)
-    AutoTargetBtn.Position = UDim2.new(0, 0, 0, 0)
-    AutoTargetBtn.BackgroundColor3 = Config.AutoTargetNearest and Color3.fromRGB(0, 130, 80) or Color3.fromRGB(20, 28, 40)
-    AutoTargetBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    AutoTargetBtn.Font = Enum.Font.GothamBold
-    AutoTargetBtn.TextSize = 10
-    AutoTargetBtn.Text = Config.AutoTargetNearest and "⚡ AUTO-NEAREST: ON" or "⚡ AUTO-NEAREST: OFF"
-    Instance.new("UICorner", AutoTargetBtn).CornerRadius = UDim.new(0, 6)
-    AutoTargetBtn.MouseButton1Click:Connect(function()
-        Config.AutoTargetNearest = not Config.AutoTargetNearest
-        AutoTargetBtn.BackgroundColor3 = Config.AutoTargetNearest and Color3.fromRGB(0, 130, 80) or Color3.fromRGB(20, 28, 40)
-        AutoTargetBtn.Text = Config.AutoTargetNearest and "⚡ AUTO-NEAREST: ON" or "⚡ AUTO-NEAREST: OFF"
-    end)
-
-    local SpectateToggleBtn = Instance.new("TextButton", Row2)
-    SpectateToggleBtn.Size = UDim2.new(0.5, -4, 1, 0)
-    SpectateToggleBtn.Position = UDim2.new(0.5, 4, 0, 0)
-    SpectateToggleBtn.BackgroundColor3 = Color3.fromRGB(20, 30, 45)
-    SpectateToggleBtn.TextColor3 = Color3.fromRGB(140, 210, 255)
-    SpectateToggleBtn.Font = Enum.Font.GothamBold
-    SpectateToggleBtn.TextSize = 10
-    SpectateToggleBtn.Text = "👁️ SPECTATE: OFF"
-    Instance.new("UICorner", SpectateToggleBtn).CornerRadius = UDim.new(0, 6)
-    SpectateToggleBtn.MouseButton1Click:Connect(function()
-        Config.Spectate = not Config.Spectate
-        SpectateToggleBtn.BackgroundColor3 = Config.Spectate and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(20, 30, 45)
-        SpectateToggleBtn.TextColor3 = Config.Spectate and Color3.fromRGB(255, 255, 255) or Color3.fromRGB(140, 210, 255)
-        SpectateToggleBtn.Text = Config.Spectate and "👁️ SPECTATE: ON" or "👁️ SPECTATE: OFF"
-        UpdateSpectateCamera()
+    local AutoHopBtn = Instance.new("TextButton", RowToggles)
+    AutoHopBtn.Size = UDim2.new(0.5, -4, 1, 0)
+    AutoHopBtn.Position = UDim2.new(0.5, 4, 0, 0)
+    AutoHopBtn.BackgroundColor3 = Config.AutoServerHop and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(20, 30, 45)
+    AutoHopBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    AutoHopBtn.Font = Enum.Font.GothamBold
+    AutoHopBtn.TextSize = 10
+    AutoHopBtn.Text = Config.AutoServerHop and "🌐 AUTO-HOP: ON" or "🌐 AUTO-HOP: OFF"
+    Instance.new("UICorner", AutoHopBtn).CornerRadius = UDim.new(0, 6)
+    AutoHopBtn.MouseButton1Click:Connect(function()
+        Config.AutoServerHop = not Config.AutoServerHop
+        AutoHopBtn.BackgroundColor3 = Config.AutoServerHop and Color3.fromRGB(0, 120, 180) or Color3.fromRGB(20, 30, 45)
+        AutoHopBtn.Text = Config.AutoServerHop and "🌐 AUTO-HOP: ON" or "🌐 AUTO-HOP: OFF"
     end)
 
     -- Target Status Card
     local TargetStatusCard = Instance.new("TextLabel", LockPage)
-    TargetStatusCard.Size = UDim2.new(1, 0, 0, 60)
+    TargetStatusCard.Size = UDim2.new(1, 0, 0, 64)
     TargetStatusCard.BackgroundColor3 = Color3.fromRGB(14, 18, 24)
     TargetStatusCard.TextColor3 = Color3.fromRGB(200, 240, 225)
     TargetStatusCard.Font = Enum.Font.Gotham
     TargetStatusCard.TextSize = 9.5
     TargetStatusCard.TextWrapped = true
-    TargetStatusCard.Text = "Selected Target: NONE\nClick a player below to lock and attack."
+    TargetStatusCard.Text = "Selected Target: NONE\nAuto-Harvester will scan and lock highest value targets."
     Instance.new("UICorner", TargetStatusCard).CornerRadius = UDim.new(0, 6)
 
     local ClearTargetBtn = Instance.new("TextButton", LockPage)
@@ -1082,7 +1060,7 @@ local function BuildUI()
     ClearTargetBtn.TextColor3 = Color3.fromRGB(255, 120, 120)
     ClearTargetBtn.Font = Enum.Font.GothamBold
     ClearTargetBtn.TextSize = 10
-    ClearTargetBtn.Text = "✕ CANCEL / RESET TARGET"
+    ClearTargetBtn.Text = "✕ CANCEL CURRENT TARGET"
     Instance.new("UICorner", ClearTargetBtn).CornerRadius = UDim.new(0, 5)
     ClearTargetBtn.MouseButton1Click:Connect(function()
         Config.SelectedPlayer = nil
@@ -1093,7 +1071,7 @@ local function BuildUI()
 
     -- Player Selection List
     local PList = Instance.new("Frame", LockPage)
-    PList.Size = UDim2.new(1, 0, 0, 175)
+    PList.Size = UDim2.new(1, 0, 0, 185)
     PList.BackgroundColor3 = Color3.fromRGB(12, 16, 20)
     Instance.new("UICorner", PList).CornerRadius = UDim.new(0, 6)
 
@@ -1118,6 +1096,7 @@ local function BuildUI()
                 count = count + 1
                 local st = GetPlayerCombatState(p)
                 local isSelected = (Config.SelectedPlayer == p)
+                local kills = KillCounter[p.Name] or 0
 
                 local b = Instance.new("TextButton", PScroll)
                 b.Size = UDim2.new(1, 0, 0, 28)
@@ -1126,7 +1105,7 @@ local function BuildUI()
                 b.Font = Enum.Font.GothamBold
                 b.TextSize = 9.5
                 b.TextXAlignment = Enum.TextXAlignment.Left
-                b.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
+                b.Text = string.format("  %s %s [Lv.%d] (%d/%d Kills)", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, kills, Config.MaxKillsPerPlayer)
                 Instance.new("UICorner", b).CornerRadius = UDim.new(0, 4)
                 PButtons[p] = b
 
@@ -1148,7 +1127,7 @@ local function BuildUI()
     Players.PlayerAdded:Connect(RefreshPList)
     Players.PlayerRemoving:Connect(RefreshPList)
 
-    -- [[ TAB 2: GODMODE & SETTINGS ]] --
+    -- [[ TAB 2: ZERO-LOSS DEFENSE & SETTINGS ]] --
     local function AddToggle(parent, title, state, callback)
         local btn = Instance.new("TextButton", parent)
         btn.Size = UDim2.new(1, 0, 0, 34)
@@ -1166,15 +1145,15 @@ local function BuildUI()
         end)
     end
 
+    AddToggle(ConfigPage, "Zero-Loss Sky Vault Escape (<30% HP)", Config.AutoEscapeLowHP, function(v) Config.AutoEscapeLowHP = v end)
     AddToggle(ConfigPage, "Auto Buso Haki (Logia Bypass)", Config.AutoHaki, function(v) Config.AutoHaki = v end)
     AddToggle(ConfigPage, "Auto Race V4 Awakening", Config.AutoRaceV4, function(v) Config.AutoRaceV4 = v end)
     AddToggle(ConfigPage, "Anti-Stun & Anti-Ragdoll", Config.AntiStun, function(v) Config.AntiStun = v; Config.AntiRagdoll = v end)
     AddToggle(ConfigPage, "Anti-Knockback (No Fling)", Config.AntiKnockback, function(v) Config.AntiKnockback = v end)
-    AddToggle(ConfigPage, "Auto Escape (<20% HP)", Config.AutoEscapeLowHP, function(v) Config.AutoEscapeLowHP = v end)
-    AddToggle(ConfigPage, "Fast Attack Burst Engine", Config.FastAttack, function(v) Config.FastAttack = v end)
+    AddToggle(ConfigPage, "Fast Attack 100% Hit Engine", Config.FastAttack, function(v) Config.FastAttack = v end)
     AddToggle(ConfigPage, "Auto Ken Haki", Config.AutoKen, function(v) Config.AutoKen = v end)
     AddToggle(ConfigPage, "Auto Skill Rotation (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
-    AddToggle(ConfigPage, "Player ESP & Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
+    AddToggle(ConfigPage, "Player ESP & Bounty Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
 
     LockPage.CanvasSize = UDim2.new(0, 0, 0, 480)
     ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 440)
@@ -1185,40 +1164,43 @@ local function BuildUI()
             task.wait(0.2)
             local cur = Config.SelectedPlayer
 
-            if IsEscaping then
+            if IsInEmergencyState then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(255, 220, 0)
-                MiniLabel.Text = "🛡️ ESCAPING LOW HP"
+                MiniLabel.Text = "🛡️ ZERO-LOSS SKY VAULT ACTIVE"
             elseif Config.Enabled and cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(255, 45, 45)
                 local hp, maxHp = GetPlayerHealth(cur)
                 MiniLabel.Text = string.format("⚔ %s | %d/%d HP", cur.Name, hp, maxHp)
             elseif Config.Enabled then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(0, 230, 140)
-                MiniLabel.Text = "⚡ COMBAT SYSTEM ACTIVE"
+                MiniLabel.Text = string.format("⚡ HARVESTING (Kills: %d)", SessionBountyKills)
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "NONTK v107 | IDLE"
+                MiniLabel.Text = "NONTK v108 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
                 if p and p.Parent then
                     local st = GetPlayerCombatState(p)
                     local isSelected = (Config.SelectedPlayer == p)
-                    btn.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
+                    local kills = KillCounter[p.Name] or 0
+                    btn.Text = string.format("  %s %s [Lv.%d] (%d/%d Kills)", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, kills, Config.MaxKillsPerPlayer)
                     btn.BackgroundColor3 = isSelected and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(18, 22, 28)
                     btn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or st.Color
                 end
             end
 
-            if not Config.Enabled then
-                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nFlySpeed: %d studs/s | Height: %.1fst\nEnable COMBAT SYSTEM to lock & attack.", Config.FlySpeed, Config.OverheadDistance)
+            if IsInEmergencyState then
+                TargetStatusCard.Text = "🛡️ ZERO-LOSS EMERGENCY ENGAGED!\nHovering at Sky Vault (1,800 studs) until HP regenerates to >85%."
+            elseif not Config.Enabled then
+                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nTotal Bounty Kills: %d\nEnable BOUNTY HARVESTER to hunt safely.", SessionBountyKills)
             elseif cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
                 local st = GetPlayerCombatState(cur)
                 local spyMsg = Config.Spectate and " | 👁️ SPY" or ""
-                TargetStatusCard.Text = string.format("⚔ LOCKED: %s (Lv.%d)%s\n🔴 STABLE OVERHEAD (%.1fst)\nHP: %d/%d | Dist: %d studs",
-                    cur.Name, st.Details.Level, spyMsg, Config.OverheadDistance, st.Details.Health, st.Details.MaxHealth, st.Details.Distance)
+                TargetStatusCard.Text = string.format("⚔ TARGET: %s (Lv.%d)%s\n🔴 BOUNTY YIELD: %s\nHP: %d/%d | Dist: %d studs",
+                    cur.Name, st.Details.Level, spyMsg, tostring(st.Details.Bounty), st.Details.Health, st.Details.MaxHealth, st.Details.Distance)
             else
-                TargetStatusCard.Text = string.format("🎯 TARGET: NONE\nFlySpeed: %d studs/s | Height: %.1f studs\nSelect a player or turn ON Auto-Nearest.", Config.FlySpeed, Config.OverheadDistance)
+                TargetStatusCard.Text = string.format("🎯 SCANNING FOR ELIGIBLE TARGETS...\nAuto-Queue: %s | Auto-Hop: %s", Config.AutoHuntLoop and "ON" or "OFF", Config.AutoServerHop and "ON" or "OFF")
             end
         end
     end)
