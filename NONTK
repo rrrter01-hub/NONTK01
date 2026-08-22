@@ -1,6 +1,5 @@
--- [[ BLOX FRUITS FULL AUTO COMBO & M1 ANNIHILATOR ]]
--- Platform: PC & Mobile (Delta, Codex, Arceus X, Wave, Solara)
--- Feature: Melee -> Sword -> Fruit Skill Rotation + Cooldown M1 Spam + Aimlock
+-- [[ BLOX FRUITS OVERHEAD HEAD-LOCK & MAX DAMAGE HITBOX ENGINE ]]
+-- Fixed: ล็อคตำแหน่งบนหัวศัตรู (Above Head) + Aimlock มุมกล้องและสกิลดิ่งลงกลางตัว 100%
 
 local Players = game:GetService("Players")
 local RunService = game:GetService("RunService")
@@ -17,13 +16,13 @@ local Config = {
     AutoCombo = false,
     AutoWarp = false,
     SpectateTarget = false,
-    ComboMode = "FullCombo", -- "FullCombo" (หมัด->ดาบ->ผล) หรือ "M1Spam" (หมัดรัวอย่างเดียว)
-    AttackDistance = 3.0,
-    AttackHeight = 1.5,
+    ComboMode = "FullCombo",
+    HeadLockHeight = 4.2,    -- ระยะความสูงล็อคตรงบนหัวศัตรู (studs)
     SelectedTarget = nil,
     SafeZoneCheck = true,
-    M1Speed = 0.03,          -- ความเร็วในการสับ M1
-    SkillDelay = 0.25        -- ดีเลย์ระหว่างกดแต่ละสกิล
+    M1Speed = 0.02,          -- ความเร็ว M1 Fast Attack
+    SkillHoldTime = 0.12,    -- กดสกิลค้างเพื่อให้ Server Register ดาเมจครบ
+    SkillDelay = 0.20        -- ดีเลย์ระหว่างเปลี่ยนสกิล
 }
 
 -- // TARGET STATS & SAFE ZONE
@@ -106,29 +105,41 @@ local function EquipTool(tool)
     end
 end
 
--- // AIMLOCK & KEYBOARD PRESS SIMULATOR
-local function AimAtTarget(targetPlayer)
+-- // 100% HITBOX AIMLOCK & CAMERA LOCK
+local function DirectAimAtTarget(targetPlayer)
     if not targetPlayer or not targetPlayer.Character then return end
     local myHrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
     local tHrp = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
+    
     if myHrp and tHrp then
-        myHrp.CFrame = CFrame.new(myHrp.Position, Vector3.new(tHrp.Position.X, myHrp.Position.Y, tHrp.Position.Z))
+        -- ล็อคตัวละครให้มองดิ่งลงเป้าหมาย 100%
+        myHrp.CFrame = CFrame.new(myHrp.Position, tHrp.Position)
+        
+        -- ล็อคมุมกล้องลงตรงกลางตัวเป้าหมาย เพื่อให้สกิลจำพวก Mouse-Aim เข้าเป้าทั้งหมด
+        if not Config.SpectateTarget then
+            Camera.CFrame = CFrame.new(Camera.CFrame.Position, tHrp.Position)
+        end
     end
 end
 
-local function PressKey(keyCode)
+local function PressSkillKey(keyCode, target)
+    DirectAimAtTarget(target)
     pcall(function()
         VirtualInputManager:SendKeyEvent(true, keyCode, false, game)
-        task.wait(0.05)
+        task.wait(Config.SkillHoldTime)
         VirtualInputManager:SendKeyEvent(false, keyCode, false, game)
     end)
 end
 
--- // FAST M1 CLICKER
-local function ClickM1()
+-- // M1 ATTACK EXECUTION
+local function ExecuteM1Attack(target)
     if not LocalPlayer.Character then return end
+    DirectAimAtTarget(target)
+    
     local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-    if tool then tool:Activate() end
+    if tool then 
+        tool:Activate() 
+    end
 
     pcall(function()
         VirtualUser:CaptureController()
@@ -138,7 +149,7 @@ local function ClickM1()
     end)
 end
 
--- // COMBO EXECUTOR
+-- // COMBO ROTATION
 local isExecutingCombo = false
 local function ExecuteFullBurst(target)
     if isExecutingCombo then return end
@@ -148,49 +159,40 @@ local function ExecuteFullBurst(target)
     local sword = GetToolByType("Sword")
     local fruit = GetToolByType("Fruit")
 
-    -- 1. หมัดเปิดคอมโบ (Melee: Z -> X -> C)
+    -- 1. หมัด (Melee: Z -> X -> C)
     if melee then
         EquipTool(melee)
-        task.wait(0.1)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.Z); task.wait(Config.SkillDelay)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.X); task.wait(Config.SkillDelay)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.C); task.wait(Config.SkillDelay)
+        task.wait(0.08)
+        PressSkillKey(Enum.KeyCode.Z, target); task.wait(Config.SkillDelay)
+        PressSkillKey(Enum.KeyCode.X, target); task.wait(Config.SkillDelay)
+        PressSkillKey(Enum.KeyCode.C, target); task.wait(Config.SkillDelay)
     end
 
-    -- 2. ยัดดาบต่อ (Sword: Z -> X)
+    -- 2. ดาบ (Sword: Z -> X)
     if sword then
         EquipTool(sword)
-        task.wait(0.1)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.Z); task.wait(Config.SkillDelay)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.X); task.wait(Config.SkillDelay)
+        task.wait(0.08)
+        PressSkillKey(Enum.KeyCode.Z, target); task.wait(Config.SkillDelay)
+        PressSkillKey(Enum.KeyCode.X, target); task.wait(Config.SkillDelay)
     end
 
-    -- 3. ยัดผลปีศาจปิดฉาก (Fruit: Z -> X -> C -> V)
+    -- 3. ผลปีศาจ (Fruit: Z -> X -> C -> V)
     if fruit then
         EquipTool(fruit)
-        task.wait(0.1)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.Z); task.wait(Config.SkillDelay)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.X); task.wait(Config.SkillDelay)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.C); task.wait(Config.SkillDelay)
-        AimAtTarget(target)
-        PressKey(Enum.KeyCode.V); task.wait(Config.SkillDelay)
+        task.wait(0.08)
+        PressSkillKey(Enum.KeyCode.Z, target); task.wait(Config.SkillDelay)
+        PressSkillKey(Enum.KeyCode.X, target); task.wait(Config.SkillDelay)
+        PressSkillKey(Enum.KeyCode.C, target); task.wait(Config.SkillDelay)
+        PressSkillKey(Enum.KeyCode.V, target); task.wait(Config.SkillDelay)
     end
 
-    -- 4. สลับกลับมาถือหมัดเพื่อเตรียมรัว M1 ในช่วงคูลดาวน์
+    -- 4. สลับถือหมัดเตรียมรัว M1 ในช่วงคูลดาวน์
     if melee then EquipTool(melee) end
-    task.wait(0.2)
+    task.wait(0.15)
     isExecutingCombo = false
 end
 
--- // HEARTBEAT LOCK-ON (เกาะติดหลังศัตรู ไม่เด้งกลับ)
+-- // OVERHEAD LOCK-ON ENGINE (ล็อคอยู่บนหัวศัตรู + Zero Velocity)
 RunService.Heartbeat:Connect(function()
     if Config.AutoWarp and Config.SelectedTarget and Config.SelectedTarget.Parent == Players then
         local target = Config.SelectedTarget
@@ -206,15 +208,15 @@ RunService.Heartbeat:Connect(function()
                 local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
 
                 if myHrp and targetHrp then
-                    -- เกาะหลังศัตรู + หันหน้าเข้าหาเป้าหมาย
-                    local lockPosition = targetHrp.CFrame * CFrame.new(0, Config.AttackHeight, Config.AttackDistance)
-                    myHrp.CFrame = CFrame.new(lockPosition.Position, targetHrp.Position)
+                    -- ตำแหน่งบนหัวศัตรูพอดี + หันหน้าดิ่งลงกลางตัวศัตรู
+                    local overheadPos = targetHrp.Position + Vector3.new(0, Config.HeadLockHeight, 0)
+                    myHrp.CFrame = CFrame.new(overheadPos, targetHrp.Position)
                     
-                    -- Zero Velocity ป้องกันการดีด
+                    -- Reset Velocity กันหลุด/กันดีด
                     myHrp.AssemblyLinearVelocity = Vector3.zero
                     myHrp.AssemblyAngularVelocity = Vector3.zero
 
-                    -- ปิดการชนกัน
+                    -- ปิด Collision ชั่วคราว
                     for _, part in pairs(myChar:GetChildren()) do
                         if part:IsA("BasePart") then part.CanCollide = false end
                     end
@@ -224,7 +226,7 @@ RunService.Heartbeat:Connect(function()
     end
 end)
 
--- // MAIN ATTACK & COMBO LOOP
+-- // MAIN ATTACK LOOP
 task.spawn(function()
     while true do
         task.wait(Config.M1Speed)
@@ -235,12 +237,12 @@ task.spawn(function()
 
             if hp > 0 and (not Config.SafeZoneCheck or not isSafe) then
                 local dist = GetDistance(target)
-                if dist <= 22 then
+                if dist <= 25 then
                     if Config.ComboMode == "FullCombo" and not isExecutingCombo then
                         task.spawn(function() ExecuteFullBurst(target) end)
                     end
-                    -- รัวหมัด M1 ซ้ำตลอดเวลา
-                    ClickM1()
+                    -- รัว M1 สับหัวไม่หยุด
+                    ExecuteM1Attack(target)
                 end
             end
         end
@@ -263,12 +265,9 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- // ==========================================
--- // TOUCH & MOUSE COMPATIBLE CLEAN UI ENGINE
--- // ==========================================
-
+-- // UI BUILDER (MOBILE & PC)
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "Onyx_Combo_Destroyer"
+ScreenGui.Name = "Onyx_HeadLock_Combo"
 ScreenGui.ResetOnSpawn = false
 
 pcall(function()
@@ -286,25 +285,24 @@ MainFrame.Parent = ScreenGui
 Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
 
 local Stroke = Instance.new("UIStroke", MainFrame)
-Stroke.Color = Color3.fromRGB(130, 40, 255)
+Stroke.Color = Color3.fromRGB(140, 40, 255)
 Stroke.Thickness = 1.6
 
 local Title = Instance.new("TextLabel")
 Title.Size = UDim2.new(1, 0, 0, 40)
 Title.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
-Title.Text = "⚡ ONYX AUTO COMBO & M1 ANNIHILATOR"
+Title.Text = "⚡ ONYX HEAD-LOCK & 100% AIM COMBO"
 Title.TextColor3 = Color3.fromRGB(230, 230, 255)
 Title.Font = Enum.Font.GothamBold
 Title.TextSize = 12
 Title.Parent = MainFrame
 Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 10)
 
--- Mobile Floating Icon
 local FloatBtn = Instance.new("TextButton")
 FloatBtn.Size = UDim2.new(0, 50, 0, 50)
 FloatBtn.Position = UDim2.new(0, 12, 0.45, 0)
-FloatBtn.BackgroundColor3 = Color3.fromRGB(130, 40, 255)
-FloatBtn.Text = "⚔️"
+FloatBtn.BackgroundColor3 = Color3.fromRGB(140, 40, 255)
+FloatBtn.Text = "🎯"
 FloatBtn.TextSize = 22
 FloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 FloatBtn.Parent = ScreenGui
@@ -313,7 +311,6 @@ FloatBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
 end)
 
--- Target Stats Card
 local StatCard = Instance.new("Frame")
 StatCard.Size = UDim2.new(0.92, 0, 0, 110)
 StatCard.Position = UDim2.new(0.04, 0, 0, 48)
@@ -340,7 +337,6 @@ InfoLabel.TextSize = 12
 InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
 InfoLabel.TextYAlignment = Enum.TextYAlignment.Top
 
--- Player Selector
 local Scroll = Instance.new("ScrollingFrame")
 Scroll.Size = UDim2.new(0.92, 0, 0, 140)
 Scroll.Position = UDim2.new(0.04, 0, 0, 168)
@@ -367,11 +363,10 @@ local function MakeBtn(txt, pos, cb)
     return b
 end
 
--- Controls Grid
-local WarpToggle = MakeBtn("Lock Warp: OFF", UDim2.new(0.04, 0, 0, 318), function(b)
+local WarpToggle = MakeBtn("Head Warp: OFF", UDim2.new(0.04, 0, 0, 318), function(b)
     Config.AutoWarp = not Config.AutoWarp
-    b.Text = "Lock Warp: " .. (Config.AutoWarp and "ON" or "OFF")
-    b.BackgroundColor3 = Config.AutoWarp and Color3.fromRGB(130, 40, 255) or Color3.fromRGB(28, 28, 36)
+    b.Text = "Head Warp: " .. (Config.AutoWarp and "ON" or "OFF")
+    b.BackgroundColor3 = Config.AutoWarp and Color3.fromRGB(140, 40, 255) or Color3.fromRGB(28, 28, 36)
 end)
 
 local ComboToggle = MakeBtn("Auto Combo: OFF", UDim2.new(0.52, 0, 0, 318), function(b)
@@ -407,7 +402,7 @@ local function UpdateList()
         if p ~= LocalPlayer then
             local btn = Instance.new("TextButton")
             btn.Size = UDim2.new(1, -6, 0, 30)
-            btn.BackgroundColor3 = (Config.SelectedTarget == p) and Color3.fromRGB(130, 40, 220) or Color3.fromRGB(25, 25, 32)
+            btn.BackgroundColor3 = (Config.SelectedTarget == p) and Color3.fromRGB(140, 40, 220) or Color3.fromRGB(25, 25, 32)
             local hp = GetTargetHealth(p)
             local lvl = GetTargetLevel(p)
             btn.Text = string.format(" %s | Lv.%s | HP: %s", p.DisplayName, tostring(lvl), tostring(hp))
@@ -432,7 +427,7 @@ Players.PlayerAdded:Connect(UpdateList)
 Players.PlayerRemoving:Connect(UpdateList)
 UpdateList()
 
--- Telemetry HUD
+-- Telemetry HUD Loop
 task.spawn(function()
     while true do
         task.wait(0.25)
@@ -450,7 +445,7 @@ task.spawn(function()
                 hpStr,
                 dist,
                 inSafe and "🛡️ SAFE ZONE" or "⚔️ COMBAT ZONE",
-                (hpVal > 0 and not inSafe) and (isExecutingCombo and "🔥 CASTING COMBO..." or "⚡ SPAMMING M1") or "PROTECTED/DEAD"
+                (hpVal > 0 and not inSafe) and (isExecutingCombo and "🔥 HEAD COMBO LOCK" or "⚡ OVERHEAD M1 SPAM") or "PROTECTED/DEAD"
             )
         else
             TargetLabel.Text = "Target: [ None Selected ]"
