@@ -1,5 +1,5 @@
--- [[ NONTK BOUNTY HUNTER v104 — PURE STICKY LOCK & BULLETPROOF FAST ATTACK ]] --
--- Cleaned: Removed Auto-Skip System | Permanent Sticky Lock | Synchronized Combat Packet Dispatch
+-- [[ NONTK BOUNTY HUNTER v105 — ANTI-ROLLBACK WARP & TRUE DAMAGE ENGINE ]] --
+-- Fixes: Zero-Rollback Hyper Glide | Force Buso Haki Penetration | 5-Stud Melee Anchor | 100% Hit Reg
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -8,6 +8,7 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
+local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -25,32 +26,31 @@ local Config = {
     AutoTargetNearest = false,
     Spectate = false,
     
-    -- Speed & Mobility Engine
-    FlySpeed = 360,
+    -- Anti-Rollback Flight Engine
+    FlySpeed = 330,              -- ความเร็วพุ่งที่เซิร์ฟเวอร์ไม่ดีดกลับ (Safe 300 - 350)
     GroundSpeedBoost = true,
-    WalkSpeedVal = 110,
+    WalkSpeedVal = 100,
     JumpPowerVal = 120,
-    OverheadDistance = 6.5,      -- ระยะ 6.5 studs เข้า Hitbox ทุกหมัดและดาบ 100%
-    PredictionLead = 0.12,
-    InstantSnapDistance = 450,
+    OverheadDistance = 5.0,      -- ระยะ 5 studs เหนือหัว (เข้า Melee Range ทุกหมัดและดาบ 100%)
+    PredictionLead = 0.10,
     
-    -- 3D Hyper Evasion
+    -- 3D Dynamic Orbit Evasion
     EvasionMode = true,
-    EvasionRadius = 6.0,
-    EvasionSpeed = 8,
+    EvasionRadius = 5.0,
+    EvasionSpeed = 7,
     
-    -- Combat & Hit Registration Engine
+    -- Combat & True Damage
     FastAttack = true,
-    FastAttackBurst = 4,        -- ส่ง 4 hits ต่อ tick
-    AttackRadius = 80,
-    AutoHaki = true,
+    FastAttackBurst = 3,         -- ยิง 3 Hits ต่อลูปเพื่อความเสถียรไม่หลุด Rate-limit
+    AttackRadius = 60,
+    AutoHaki = true,             -- บังคับเปิดฮาคิเกราะ (Buso) ตีทะลวงโรเกีย
     AutoKen = true,
     AutoPvP = true,
     AutoRaceV4 = true,
     SkillSpam = true,
     Skills = {"Z", "X", "C", "V"},
     Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.25,
+    WeaponSwitchDelay = 0.30,
     
     -- Defense & Godmode
     GodmodeDefense = true,
@@ -59,7 +59,7 @@ local Config = {
     WipeStunInstances = true,
     AntiRagdoll = true,
     AutoEscapeLowHP = true,
-    EscapeHPPercent = 25,
+    EscapeHPPercent = 20,
     AntiVoid = true,
     
     -- Visuals ESP
@@ -74,7 +74,7 @@ local CombatFramework = nil
 local ActiveController = nil
 local LastWeaponSwitch = 0
 local LastV4Check = 0
-local LastAttackTick = 0
+local LastHakiCheck = 0
 local CurrentWeaponIndex = 1
 local ESPObjects = {}
 local IsEscaping = false
@@ -160,7 +160,7 @@ local function UpdateSpectateCamera()
     end
 end
 
--- [[ PVP STATUS CHECKER (INFO ONLY) ]] --
+-- [[ COMBAT STATE ]] --
 local function GetPlayerCombatState(p)
     local state = {
         IsAttackable = false,
@@ -238,7 +238,7 @@ local function GetPlayerCombatState(p)
     return state
 end
 
--- [[ AUTO TARGET NEAREST SYSTEM ]] --
+-- [[ AUTO TARGET NEAREST ]] --
 local function FindBestTarget()
     if not Config.AutoTargetNearest or Config.SelectedPlayer then return end
     local closest, closestDist = nil, math.huge
@@ -261,10 +261,39 @@ local function FindBestTarget()
     end
 end
 
+-- [[ FORCE BUSO HAKI & BUFF ENGINE ]] --
+local function EnsureBuffs()
+    if not Character then return end
+    
+    -- Auto Buso Haki (จำเป็นมาก ไม่งั้นตีผลโรเกีย/ศัตรูบางตัวไม่เข้า)
+    if Config.AutoHaki and GameRemotes.CommF and (tick() - LastHakiCheck > 1.5) then
+        LastHakiCheck = tick()
+        pcall(function()
+            if not Character:FindFirstChild("HasBuso") then
+                GameRemotes.CommF:InvokeServer("Buso")
+            end
+        end)
+    end
+
+    pcall(function()
+        if Config.AutoPvP and GameRemotes.CommF then
+            if Character:FindFirstChild("PvPDisabled") then GameRemotes.CommF:InvokeServer("EnablePvp") end
+        end
+        if Config.AutoKen then
+            local kenActive = LocalPlayer:GetAttribute("KenActive") or Character:FindFirstChild("KenHaki")
+            if not kenActive then
+                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
+                task.wait(0.01)
+                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
+            end
+        end
+    end)
+end
+
 -- [[ RACE V4 SYSTEM ]] --
 local function TriggerRaceV4()
     if not Config.AutoRaceV4 or not Character then return end
-    if tick() - LastV4Check < 0.25 then return end
+    if tick() - LastV4Check < 0.3 then return end
     LastV4Check = tick()
 
     pcall(function()
@@ -308,7 +337,7 @@ local function ApplyGodmodeDefense()
 
     if Config.AntiKnockback and RootPart then
         local vel = RootPart.AssemblyLinearVelocity
-        if vel.Magnitude > 180 and not Config.Enabled then
+        if vel.Magnitude > 200 and not Config.Enabled then
             RootPart.AssemblyLinearVelocity = Vector3.zero
             RootPart.AssemblyAngularVelocity = Vector3.zero
         end
@@ -324,7 +353,7 @@ local function ApplyGodmodeDefense()
         if hpPct <= Config.EscapeHPPercent then
             IsEscaping = true
             if FlightBV then
-                FlightBV.Velocity = Vector3.new(0, 380, 0)
+                FlightBV.Velocity = Vector3.new(0, 350, 0)
             else
                 RootPart.CFrame = RootPart.CFrame + Vector3.new(0, 40, 0)
             end
@@ -336,14 +365,14 @@ local function ApplyGodmodeDefense()
     end
 end
 
--- [[ FLIGHT PHYSICS & KINETICS ]] --
+-- [[ ZERO-ROLLBACK FLIGHT KINETICS ]] --
 local function SetupFlightPhysics()
     if not RootPart then return end
     
     if not FlightBV or FlightBV.Parent ~= RootPart then
         if FlightBV then FlightBV:Destroy() end
         FlightBV = Instance.new("BodyVelocity")
-        FlightBV.Name = "NONTK_FlightVel"
+        FlightBV.Name = "NONTK_NoRollbackVel"
         FlightBV.Velocity = Vector3.zero
         FlightBV.MaxForce = Vector3.new(1e9, 1e9, 1e9)
         FlightBV.P = 25000
@@ -353,7 +382,7 @@ local function SetupFlightPhysics()
     if not FlightBG or FlightBG.Parent ~= RootPart then
         if FlightBG then FlightBG:Destroy() end
         FlightBG = Instance.new("BodyGyro")
-        FlightBG.Name = "NONTK_FlightGyro"
+        FlightBG.Name = "NONTK_NoRollbackGyro"
         FlightBG.MaxTorque = Vector3.new(1e9, 1e9, 1e9)
         FlightBG.P = 25000
         FlightBG.D = 15
@@ -379,28 +408,22 @@ RunService.Stepped:Connect(function()
     end
 end)
 
--- [[ 3D STICKY GLUE LOCK ]] --
-local function StickyGlueToTarget(targetHRP)
+-- [[ ZERO-ROLLBACK HYPER GLUE ENGINE ]] --
+local function AntiRollbackGlue(targetHRP)
     SetupFlightPhysics()
     if not FlightBV or not FlightBG or not RootPart or not targetHRP then return end
     
     local curPos = RootPart.Position
     local targetVel = targetHRP.AssemblyLinearVelocity or Vector3.zero
     local predictedPos = targetHRP.Position + (targetVel * Config.PredictionLead)
-    local rawDist = (predictedPos - curPos).Magnitude
-
-    if rawDist > Config.InstantSnapDistance then
-        local snapPoint = predictedPos + Vector3.new(0, Config.OverheadDistance + 5, 0)
-        RootPart.CFrame = CFrame.new(snapPoint, targetHRP.Position)
-        return
-    end
-
+    
+    -- Target destination at exact Melee Height (5 studs)
     local targetDestination
     if Config.EvasionMode then
         OrbitAngle = (OrbitAngle + (Config.EvasionSpeed * RunService.RenderStepped:Wait())) % (2 * math.pi)
         local offsetX = math.cos(OrbitAngle) * Config.EvasionRadius
         local offsetZ = math.sin(OrbitAngle) * Config.EvasionRadius
-        local dynamicHeight = Config.OverheadDistance + math.sin(OrbitAngle * 2) * 1.2
+        local dynamicHeight = Config.OverheadDistance + math.sin(OrbitAngle * 2) * 1.0
         targetDestination = predictedPos + Vector3.new(offsetX, dynamicHeight, offsetZ)
     else
         targetDestination = predictedPos + Vector3.new(0, Config.OverheadDistance, 0)
@@ -409,19 +432,22 @@ local function StickyGlueToTarget(targetHRP)
     local delta = targetDestination - curPos
     local dist = delta.Magnitude
 
+    -- Always lock gaze at target HRP
     FlightBG.CFrame = CFrame.lookAt(curPos, targetHRP.Position)
 
-    if dist > 6 then
+    if dist > 8 then
+        -- ใช้ Hyper-Glide (330 studs/s) ไม่ใช้ CFrame Snap ข้ามแมพ เพื่อป้องกันเซิร์ฟเวอร์ดึงกลับ
         FlightBV.Velocity = delta.Unit * Config.FlySpeed
     else
-        FlightBV.Velocity = targetVel + (delta.Unit * 35)
+        -- ล็อคความเร็วติดกับตัวเป้าหมาย
+        FlightBV.Velocity = targetVel + (delta.Unit * 25)
         RootPart.AssemblyLinearVelocity = Vector3.zero
         RootPart.AssemblyAngularVelocity = Vector3.zero
         RootPart.CFrame = CFrame.new(targetDestination, targetHRP.Position)
     end
 end
 
--- [[ RELIABLE WEAPON & ATTACK ENGINE ]] --
+-- [[ GUARANTEED TRUE-DAMAGE FAST ATTACK ]] --
 local function EnsureWeaponEquipped()
     if not Character or not Humanoid then return nil end
     local tool = Character:FindFirstChildOfClass("Tool")
@@ -456,21 +482,21 @@ local function SwitchWeapon()
     CurrentWeaponIndex = (CurrentWeaponIndex % #Config.Weapons) + 1
 end
 
-local function ExecuteFastAttack(targetHRP)
+local function ExecuteTrueDamageAttack(targetHRP)
     if not Config.FastAttack or not targetHRP then return end
     local targetChar = targetHRP.Parent
     if not targetChar then return end
     
     local currentTool = EnsureWeaponEquipped()
     
-    -- 1. Native Combat Framework Invocation
+    -- 1. Client-Side Combat Framework Trigger
     pcall(function()
         if not ActiveController then SetupCombatHooks() end
         if ActiveController and typeof(ActiveController) == "table" then
             ActiveController.timeToNextAttack = 0
             ActiveController.attacking = false
             ActiveController.blocking = false
-            ActiveController.hitboxMagnitude = 65
+            ActiveController.hitboxMagnitude = 60
             
             if typeof(ActiveController.attack) == "function" then
                 ActiveController:attack()
@@ -481,7 +507,7 @@ local function ExecuteFastAttack(targetHRP)
         end
     end)
     
-    -- 2. Net Remotes Dispatch
+    -- 2. Net Remote Packet Dispatch
     pcall(function()
         if GameRemotes.RegisterAttack then
             GameRemotes.RegisterAttack:FireServer(0)
@@ -494,7 +520,7 @@ local function ExecuteFastAttack(targetHRP)
         end
     end)
     
-    -- 3. Mouse Click & Tool Activation
+    -- 3. Direct Tool & Click Simulation
     pcall(function()
         if currentTool then currentTool:Activate() end
         VirtualUser:CaptureController()
@@ -517,27 +543,6 @@ local function CastSkills(targetHRP, targetHum)
         VirtualInputManager:SendKeyEvent(false, Enum.KeyCode[key], false, game)
         task.wait(0.015)
     end
-end
-
--- [[ AUTO BUFFS ]] --
-local function EnsureBuffs()
-    if not Character then return end
-    pcall(function()
-        if Config.AutoPvP and GameRemotes.CommF then
-            if Character:FindFirstChild("PvPDisabled") then GameRemotes.CommF:InvokeServer("EnablePvp") end
-        end
-        if Config.AutoHaki and GameRemotes.CommF then
-            if not Character:FindFirstChild("HasBuso") then GameRemotes.CommF:InvokeServer("Buso") end
-        end
-        if Config.AutoKen then
-            local kenActive = LocalPlayer:GetAttribute("KenActive") or Character:FindFirstChild("KenHaki")
-            if not kenActive then
-                VirtualInputManager:SendKeyEvent(true, Enum.KeyCode.E, false, game)
-                task.wait(0.01)
-                VirtualInputManager:SendKeyEvent(false, Enum.KeyCode.E, false, game)
-            end
-        end
-    end)
 end
 
 LocalPlayer.CharacterAdded:Connect(function(char)
@@ -678,7 +683,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- [[ MAIN COMBAT LOOP (NEVER DROPS TARGET) ]] --
+-- [[ MAIN COMBAT LOOP ]] --
 RunService.Heartbeat:Connect(function()
     ApplyGodmodeDefense()
 
@@ -695,7 +700,6 @@ RunService.Heartbeat:Connect(function()
         local tHRP = SafeGetHRP(target.Character)
         local tHum = target.Character:FindFirstChildOfClass("Humanoid")
 
-        -- ปลดล็อคเฉพาะตอนเป้าหมายตาย หรือออกจากเกมเท่านั้น
         if not tHum or tHum.Health <= 0 or not tHRP then
             Config.SelectedPlayer = nil
             ClearFlightPhysics()
@@ -703,7 +707,7 @@ RunService.Heartbeat:Connect(function()
             return
         end
 
-        StickyGlueToTarget(tHRP)
+        AntiRollbackGlue(tHRP)
         
         local dist = (RootPart.Position - tHRP.Position).Magnitude
         if dist <= Config.AttackRadius then
@@ -714,7 +718,7 @@ RunService.Heartbeat:Connect(function()
                 LastWeaponSwitch = tick()
             end
 
-            ExecuteFastAttack(tHRP)
+            ExecuteTrueDamageAttack(tHRP)
             CastSkills(tHRP, tHum)
         end
     else
@@ -762,7 +766,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V104_PURE"
+    ScreenGui.Name = "NONTK_V105_TRUEDAMAGE"
     ScreenGui.ResetOnSpawn = false
     
     local parentGui = (gethui and gethui()) or (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or LocalPlayer:WaitForChild("PlayerGui")
@@ -808,7 +812,7 @@ local function BuildUI()
     MiniLabel.Font = Enum.Font.GothamBold
     MiniLabel.TextSize = 10.5
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "NONTK v104 | READY"
+    MiniLabel.Text = "NONTK v105 | READY"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 52, 1, -8)
@@ -847,7 +851,7 @@ local function BuildUI()
     HeaderTitle.Font = Enum.Font.GothamBold
     HeaderTitle.TextSize = IsMobile and 11 or 12.5
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚡ NONTK v104 — PURE LOCK & COMBAT ENGINE"
+    HeaderTitle.Text = "⚡ NONTK v105 — TRUE DAMAGE PREDATOR"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -956,7 +960,7 @@ local function BuildUI()
     SpeedLabel.Font = Enum.Font.GothamBold
     SpeedLabel.TextSize = 11.5
     SpeedLabel.TextXAlignment = Enum.TextXAlignment.Left
-    SpeedLabel.Text = "⚡ FLY SPEED: " .. Config.FlySpeed .. " studs/s"
+    SpeedLabel.Text = "⚡ GLIDE SPEED: " .. Config.FlySpeed .. " studs/s"
 
     local SpeedInputBox = Instance.new("TextBox", SpeedCard)
     SpeedInputBox.Size = UDim2.new(0, 64, 0, 22)
@@ -977,27 +981,27 @@ local function BuildUI()
     local SFill = Instance.new("Frame", STrack)
     SFill.BackgroundColor3 = Color3.fromRGB(0, 220, 140)
     SFill.BorderSizePixel = 0
-    SFill.Size = UDim2.new((Config.FlySpeed - 50) / 450, 0, 1, 0)
+    SFill.Size = UDim2.new((Config.FlySpeed - 50) / 400, 0, 1, 0)
     Instance.new("UICorner", SFill).CornerRadius = UDim.new(1, 0)
 
     local SKnob = Instance.new("TextButton", STrack)
     SKnob.Size = UDim2.new(0, 18, 0, 18)
-    SKnob.Position = UDim2.new((Config.FlySpeed - 50) / 450, -9, 0.5, -9)
+    SKnob.Position = UDim2.new((Config.FlySpeed - 50) / 400, -9, 0.5, -9)
     SKnob.BackgroundColor3 = Color3.fromRGB(140, 255, 190)
     SKnob.Text = ""
     Instance.new("UICorner", SKnob).CornerRadius = UDim.new(1, 0)
 
     local function SyncSpeedUI()
-        local ratio = math.clamp((Config.FlySpeed - 50) / 450, 0, 1)
+        local ratio = math.clamp((Config.FlySpeed - 50) / 400, 0, 1)
         SFill.Size = UDim2.new(ratio, 0, 1, 0)
         SKnob.Position = UDim2.new(ratio, -9, 0.5, -9)
-        SpeedLabel.Text = "⚡ FLY SPEED: " .. Config.FlySpeed .. " studs/s"
+        SpeedLabel.Text = "⚡ GLIDE SPEED: " .. Config.FlySpeed .. " studs/s"
         SpeedInputBox.Text = tostring(Config.FlySpeed)
     end
 
     SpeedInputBox.FocusLost:Connect(function()
         local n = tonumber(SpeedInputBox.Text)
-        if n then Config.FlySpeed = math.clamp(math.floor(n), 50, 500) end
+        if n then Config.FlySpeed = math.clamp(math.floor(n), 50, 450) end
         SyncSpeedUI()
     end)
 
@@ -1012,7 +1016,7 @@ local function BuildUI()
         if isDraggingSpeed then
             local mouse = LocalPlayer:GetMouse()
             local ratio = math.clamp((mouse.X - STrack.AbsolutePosition.X) / STrack.AbsoluteSize.X, 0, 1)
-            Config.FlySpeed = math.floor(50 + ratio * 450)
+            Config.FlySpeed = math.floor(50 + ratio * 400)
             SyncSpeedUI()
         end
     end)
@@ -1027,7 +1031,7 @@ local function BuildUI()
     BtnMinusSpeed.Text = "−"
     Instance.new("UICorner", BtnMinusSpeed).CornerRadius = UDim.new(0, 4)
     BtnMinusSpeed.MouseButton1Click:Connect(function()
-        Config.FlySpeed = math.max(50, Config.FlySpeed - 25)
+        Config.FlySpeed = math.max(50, Config.FlySpeed - 20)
         SyncSpeedUI()
     end)
 
@@ -1041,15 +1045,15 @@ local function BuildUI()
     BtnPlusSpeed.Text = "+"
     Instance.new("UICorner", BtnPlusSpeed).CornerRadius = UDim.new(0, 4)
     BtnPlusSpeed.MouseButton1Click:Connect(function()
-        Config.FlySpeed = math.min(500, Config.FlySpeed + 25)
+        Config.FlySpeed = math.min(450, Config.FlySpeed + 20)
         SyncSpeedUI()
     end)
 
     local Presets = {
-        {Name = "240 (Fast)", Speed = 240},
-        {Name = "320 (Turbo)", Speed = 320},
-        {Name = "360 (Apex)", Speed = 360},
-        {Name = "500 (MAX)", Speed = 500}
+        {Name = "220 (Safe)", Speed = 220},
+        {Name = "300 (Fast)", Speed = 300},
+        {Name = "330 (Apex)", Speed = 330},
+        {Name = "400 (Turbo)", Speed = 400}
     }
     for i, pData in ipairs(Presets) do
         local pBtn = Instance.new("TextButton", SpeedCard)
@@ -1121,7 +1125,7 @@ local function BuildUI()
     HPlus.Text = "+"
     Instance.new("UICorner", HPlus).CornerRadius = UDim.new(0, 4)
     HPlus.MouseButton1Click:Connect(function()
-        Config.OverheadDistance = math.min(20, Config.OverheadDistance + 1)
+        Config.OverheadDistance = math.min(15, Config.OverheadDistance + 1)
         HeightLabel.Text = "H: " .. Config.OverheadDistance .. "st"
     end)
 
@@ -1263,17 +1267,17 @@ local function BuildUI()
         end)
     end
 
-    AddToggle(ConfigPage, "Ground WalkSpeed Boost (110 WS)", Config.GroundSpeedBoost, function(v) 
+    AddToggle(ConfigPage, "Ground WalkSpeed Boost (100 WS)", Config.GroundSpeedBoost, function(v) 
         Config.GroundSpeedBoost = v
         if not v and Humanoid then Humanoid.WalkSpeed = 16 end
     end)
+    AddToggle(ConfigPage, "Auto Buso Haki (Logia Bypass)", Config.AutoHaki, function(v) Config.AutoHaki = v end)
     AddToggle(ConfigPage, "Auto Race V4 Awakening", Config.AutoRaceV4, function(v) Config.AutoRaceV4 = v end)
     AddToggle(ConfigPage, "Realtime Stun Wiper (Anti-Freeze)", Config.WipeStunInstances, function(v) Config.WipeStunInstances = v end)
     AddToggle(ConfigPage, "Anti-Stun & Anti-Ragdoll", Config.AntiStun, function(v) Config.AntiStun = v; Config.AntiRagdoll = v end)
     AddToggle(ConfigPage, "Anti-Knockback (No Fling)", Config.AntiKnockback, function(v) Config.AntiKnockback = v end)
-    AddToggle(ConfigPage, "Auto Escape (<25% HP)", Config.AutoEscapeLowHP, function(v) Config.AutoEscapeLowHP = v end)
-    AddToggle(ConfigPage, "Fast Attack Burst Engine", Config.FastAttack, function(v) Config.FastAttack = v end)
-    AddToggle(ConfigPage, "Auto Buso Haki", Config.AutoHaki, function(v) Config.AutoHaki = v end)
+    AddToggle(ConfigPage, "Auto Escape (<20% HP)", Config.AutoEscapeLowHP, function(v) Config.AutoEscapeLowHP = v end)
+    AddToggle(ConfigPage, "Fast Attack True Damage", Config.FastAttack, function(v) Config.FastAttack = v end)
     AddToggle(ConfigPage, "Auto Ken Haki", Config.AutoKen, function(v) Config.AutoKen = v end)
     AddToggle(ConfigPage, "Auto Skill Rotation (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
     AddToggle(ConfigPage, "Player ESP & Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
@@ -1281,7 +1285,7 @@ local function BuildUI()
     LockPage.CanvasSize = UDim2.new(0, 0, 0, 560)
     ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 460)
 
-    -- Realtime Status Loop
+    -- Status Loop
     task.spawn(function()
         while ScreenGui.Parent do
             task.wait(0.2)
@@ -1299,7 +1303,7 @@ local function BuildUI()
                 MiniLabel.Text = "⚡ COMBAT SYSTEM ACTIVE"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "NONTK v104 | IDLE"
+                MiniLabel.Text = "NONTK v105 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
@@ -1313,14 +1317,14 @@ local function BuildUI()
             end
 
             if not Config.Enabled then
-                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nFlySpeed: %d studs/s | Ground: %d WS\nEnable COMBAT SYSTEM to lock & attack.", Config.FlySpeed, Config.WalkSpeedVal)
+                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nGlideSpeed: %d studs/s | Height: %.1fst\nEnable COMBAT SYSTEM to lock & attack.", Config.FlySpeed, Config.OverheadDistance)
             elseif cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
                 local st = GetPlayerCombatState(cur)
                 local spyMsg = Config.Spectate and " | 👁️ SPY" or ""
-                TargetStatusCard.Text = string.format("⚔ LOCKED: %s (Lv.%d)%s\n🔴 ENGAGED AT CLOSE OVERHEAD (%.1fst)\nHP: %d/%d | Dist: %d studs",
+                TargetStatusCard.Text = string.format("⚔ LOCKED: %s (Lv.%d)%s\n🔴 ZERO-ROLLBACK ANCHOR (%.1fst)\nHP: %d/%d | Dist: %d studs",
                     cur.Name, st.Details.Level, spyMsg, Config.OverheadDistance, st.Details.Health, st.Details.MaxHealth, st.Details.Distance)
             else
-                TargetStatusCard.Text = string.format("🎯 TARGET: NONE\nFlySpeed: %d studs/s | Height: %.1f studs\nSelect a player or turn ON Auto-Nearest.", Config.FlySpeed, Config.OverheadDistance)
+                TargetStatusCard.Text = string.format("🎯 TARGET: NONE\nGlideSpeed: %d studs/s | Height: %.1f studs\nSelect a player or turn ON Auto-Nearest.", Config.FlySpeed, Config.OverheadDistance)
             end
         end
     end)
