@@ -1,37 +1,42 @@
 --[[
-    BluezyGPT Bounty Hunter v1.0
+    BluezyGPT Bounty Hunter v1.1
     เกม: Blox Fruits (Roblox)
-    รองรับ: Mobile + PC (Delta, Arceus X, Hydrogen, PC executors)
-    ฟีเจอร์: Player ESP, Select Target, Fly Lock, Agnes 2.5 Flash Attack, Anti AFK
+    รองรับ: Mobile + PC (Delta, Arceus X, Hydrogen, Delta PC, Synapse, etc.)
+    แก้บั๊ก: ตัวแปรผิด syntax, continue statement, parenting issues
     
     วิธีใช้:
-    1. รันสคริปต์ผ่าน Executor ที่เข้าเกม Blox Fruits แล้ว
-    2. เลือกผู้เล่นจาก Dropdown หรือกดปุ่ม Refresh
-    3. กด Lock เพื่อล็อคเป้า
-    4. ระบบจะบินไปหา ล็อคเหนือหัว และโจมตีอัตโนมัติ
+    1. เข้าเกม Blox Fruits
+    2. รันสคริปต์ผ่าน Executor
+    3. เลือกผู้เล่นจาก Dropdown หรือเปิด Agnes 2.5 Flash Lock
+    4. กด Lock เพื่อล็อคเป้า ระบบบินไปฆ่าให้อัตโนมัติ
 ]]
 
+-- ============================================
+-- Services
+-- ============================================
 local Players = game:GetService("Players")
-local LocalPlayer = Players.LocalPlayer
 local RunService = game:GetService("RunService")
 local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local TweenService = game:GetService("TweenService")
-local HttpService = game:GetService("HttpService")
+local VirtualUser = game:GetService("VirtualUser")
+local StarterGui = game:GetService("StarterGui")
+local CoreGui = game:GetService("CoreGui")
+
+local LocalPlayer = Players.LocalPlayer
 
 -- ============================================
 -- Config
 -- ============================================
 local Config = {
-    FlyHeight = 25,           -- ระยะห่างเหนือหัวเป้าหมาย ( studs )
-    FlySpeed = 250,           -- ความเร็วบินไปหาเป้า
-    AttackRange = 15,         -- ระยะโจมตี
-    AttackCooldown = 0.15,    -- หน่วงเวลา M1 ( วินาที )
-    TargetRefreshRate = 0.1,  -- อัปเดตเป้าทุกกี่วินาที
-    ESPUpdateRate = 0.2,      -- อัปเดต ESP ทุกกี่วินาที
-    UseSkillInCombo = true,   -- ใช้สกิลใน combo ด้วย
-    SkillDelay = 0.3,         -- หน่วงสกิล
-    WeaponCheck = true,       -- เช็คอาวุธก่อนโจมตี
+    FlyHeight = 25,
+    FlySpeed = 250,
+    AttackRange = 15,
+    AttackCooldown = 0.15,
+    TargetRefreshRate = 0.1,
+    ESPUpdateRate = 0.2,
+    UseSkillInCombo = true,
+    SkillDelay = 0.3,
 }
 
 local State = {
@@ -48,7 +53,7 @@ local State = {
 }
 
 -- ============================================
--- Utility Functions
+-- Utility
 -- ============================================
 
 local function getCharacter(player)
@@ -67,15 +72,15 @@ local function getDistance(part1, part2)
 end
 
 local function getPlayerLevel(player)
-    local char, hum = getCharacter(player)
-    if not hum then return 0 end
-    -- สำหรับเกม Blox Fruits จะใช้ Data folder
     local dataFolder = player:FindFirstChild("Data")
     if dataFolder then
         local level = dataFolder:FindFirstChild("Level")
         if level then return level.Value end
-        local bounty = dataFolder:FindFirstChild("Bounty")
-        if bounty then return bounty.Value end
+    end
+    local leaderstats = player:FindFirstChild("leaderstats")
+    if leaderstats then
+        local lvl = leaderstats:FindFirstChild("Level")
+        if lvl then return lvl.Value end
     end
     return 0
 end
@@ -86,7 +91,6 @@ local function getPlayerBounty(player)
         local bounty = dataFolder:FindFirstChild("Bounty") or dataFolder:FindFirstChild("BountyHonor")
         if bounty then return bounty.Value end
     end
-    -- บางทีเก็บใน leaderstats
     local leaderstats = player:FindFirstChild("leaderstats")
     if leaderstats then
         local bounty = leaderstats:FindFirstChild("Bounty") or leaderstats:FindFirstChild("Bounty/Honor")
@@ -96,10 +100,9 @@ local function getPlayerBounty(player)
 end
 
 local function isPlayerInPvP(player)
-    local char, hum = getCharacter(player)
+    local char = player.Character
     if not char then return false end
     
-    -- เช็คว่ามี PvP tag หรือไม่
     local dataFolder = player:FindFirstChild("Data")
     if dataFolder then
         local pvp = dataFolder:FindFirstChild("PvpEnabled") 
@@ -108,12 +111,10 @@ local function isPlayerInPvP(player)
         if pvp then return pvp.Value end
     end
     
-    -- สำหรับ Blox Fruits จะเช็คจากการมี weapon หรือไม่
     local hasWeapon = char:FindFirstChild("HasWeapon") 
                    or char:FindFirstChild("PvpEnabled")
     if hasWeapon then return true end
     
-    -- เช็ค Bounty ว่าเกินขีดที่เข้า PvP ได้
     local bounty = getPlayerBounty(player)
     if bounty > 0 then return true end
     
@@ -121,14 +122,15 @@ local function isPlayerInPvP(player)
 end
 
 local function isPlayerAlive(player)
-    local char, hum = getCharacter(player)
+    local _, hum = getCharacter(player)
     if not hum then return false end
     return hum.Health > 0
 end
 
 local function getHealthPercent(player)
-    local char, hum = getCharacter(player)
+    local _, hum = getCharacter(player)
     if not hum then return 0 end
+    if hum.MaxHealth <= 0 then return 0 end
     return math.floor((hum.Health / hum.MaxHealth) * 100)
 end
 
@@ -137,7 +139,7 @@ local function formatNumber(n)
     while true do
         local k
         formatted, k = formatted:gsub("^(-?%d+)(%d%d%d)", "%1,%2")
-        if not k then break end
+        if not k or k == 0 then break end
     end
     return formatted
 end
@@ -152,6 +154,16 @@ local function getValidPlayers()
     return list
 end
 
+local function notify(title, text)
+    pcall(function()
+        StarterGui:SetCore("SendNotification", {
+            Title = title,
+            Text = text,
+            Duration = 3
+        })
+    end)
+end
+
 -- ============================================
 -- ESP System
 -- ============================================
@@ -161,7 +173,6 @@ local function createESP(player)
     
     local esp = {}
     
-    -- Billboard (ข้อความเหนือหัว)
     local billboard = Instance.new("BillboardGui")
     billboard.Name = "BluezyESP_" .. player.Name
     billboard.Size = UDim2.new(0, 250, 0, 80)
@@ -169,7 +180,6 @@ local function createESP(player)
     billboard.AlwaysOnTop = true
     billboard.LightInfluence = 0
     
-    -- กรอบหลัก
     local frame = Instance.new("Frame")
     frame.Size = UDim2.new(1, 0, 1, 0)
     frame.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
@@ -180,7 +190,6 @@ local function createESP(player)
     corner.CornerRadius = UDim.new(0, 6)
     corner.Parent = frame
     
-    -- ชื่อ + Level
     local nameLabel = Instance.new("TextLabel")
     nameLabel.Name = "NameLabel"
     nameLabel.Size = UDim2.new(1, -10, 0, 22)
@@ -192,7 +201,6 @@ local function createESP(player)
     nameLabel.TextSize = 13
     nameLabel.TextXAlignment = Enum.TextXAlignment.Left
     
-    -- Level/Bounty
     local levelLabel = Instance.new("TextLabel")
     levelLabel.Name = "LevelLabel"
     levelLabel.Size = UDim2.new(1, -10, 0, 18)
@@ -204,7 +212,6 @@ local function createESP(player)
     levelLabel.TextSize = 11
     levelLabel.TextXAlignment = Enum.TextXAlignment.Left
     
-    -- Health bar
     local healthBarBG = Instance.new("Frame")
     healthBarBG.Name = "HealthBarBG"
     healthBarBG.Size = UDim2.new(1, -10, 0, 8)
@@ -226,19 +233,17 @@ local function createESP(player)
     fillCorner.CornerRadius = UDim.new(0, 4)
     fillCorner.Parent = healthBarFill
     
-    -- Distance + PvP status
     local distLabel = Instance.new("TextLabel")
     distLabel.Name = "DistLabel"
     distLabel.Size = UDim2.new(1, -10, 0, 16)
     distLabel.Position = UDim2.new(0, 5, 0, 56)
     distLabel.BackgroundTransparency = 1
-    distLabel.Text = "Distance: ??? | PvP: ???"
+    distLabel.Text = "Dist: ??? | PvP: ???"
     distLabel.TextColor3 = Color3.fromRGB(150, 200, 255)
     distLabel.Font = Enum.Font.Gotham
     distLabel.TextSize = 10
     distLabel.TextXAlignment = Enum.TextXAlignment.Left
     
-    -- Parent chain
     healthBarFill.Parent = healthBarBG
     healthBarBG.Parent = frame
     nameLabel.Parent = frame
@@ -256,7 +261,6 @@ local function createESP(player)
     
     State.ESPObjects[player] = esp
     
-    -- Attach to character
     local function attachESP()
         local char = player.Character
         if not char then return end
@@ -289,65 +293,56 @@ local function updateESP()
     for player, esp in pairs(State.ESPObjects) do
         if not player.Parent then
             removeESP(player)
-            continue
-        end
-        
-        local char, hum, root = getCharacter(player)
-        if not char or not hum or not root then
-            esp.Billboard.Enabled = false
-            continue
-        end
-        
-        esp.Billboard.Enabled = State.ESPEnabled
-        
-        local localChar, _, localRoot = getCharacter(LocalPlayer)
-        if not localRoot then continue end
-        
-        local dist = getDistance(root, localRoot)
-        local level = getPlayerLevel(player)
-        local bounty = getPlayerBounty(player)
-        local hp = getHealthPercent(player)
-        local inPvP = isPlayerInPvP(player)
-        
-        -- Update colors based on status
-        local nameColor = Color3.fromRGB(255, 255, 255)
-        if State.LockedPlayer == player then
-            nameColor = Color3.fromRGB(255, 50, 50)
-        elseif State.SelectedPlayer == player then
-            nameColor = Color3.fromRGB(255, 200, 50)
-        end
-        
-        esp.NameLabel.TextColor3 = nameColor
-        esp.NameLabel.Text = player.Name
-        
-        if bounty > 0 then
-            esp.LevelLabel.Text = string.format("Bounty: %s | HP: %d%%", formatNumber(bounty), hp)
         else
-            esp.LevelLabel.Text = string.format("Level: %d | HP: %d%%", level, hp)
-        end
-        
-        -- Health bar
-        esp.HealthFill.Size = UDim2.new(hp / 100, 0, 1, 0)
-        if hp > 50 then
-            esp.HealthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
-        elseif hp > 25 then
-            esp.HealthFill.BackgroundColor3 = Color3.fromRGB(255, 200, 50)
-        else
-            esp.HealthFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
-        end
-        
-        -- Distance + PvP
-        local pvpText = inPvP and "PvP: ON" or "PvP: OFF"
-        local pvpColor = inPvP and Color3.fromRGB(0, 255, 100) or Color3.fromRGB(255, 100, 100)
-        
-        esp.DistLabel.Text = string.format("Dist: %dm | %s", math.floor(dist), pvpText)
-        esp.DistLabel.TextColor3 = pvpColor
-        
-        -- Level label color
-        if State.LockedPlayer == player then
-            esp.LevelLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
-        else
-            esp.LevelLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+            local char, hum, root = getCharacter(player)
+            if not char or not hum or not root then
+                esp.Billboard.Enabled = false
+            else
+                esp.Billboard.Enabled = State.ESPEnabled
+                
+                local _, _, localRoot = getCharacter(LocalPlayer)
+                if not localRoot then return end
+                
+                local dist = getDistance(root, localRoot)
+                local level = getPlayerLevel(player)
+                local bounty = getPlayerBounty(player)
+                local hp = getHealthPercent(player)
+                local inPvP = isPlayerInPvP(player)
+                
+                local nameColor = Color3.fromRGB(255, 255, 255)
+                if State.LockedPlayer == player then
+                    nameColor = Color3.fromRGB(255, 50, 50)
+                elseif State.SelectedPlayer == player then
+                    nameColor = Color3.fromRGB(255, 200, 50)
+                end
+                
+                esp.NameLabel.TextColor3 = nameColor
+                esp.NameLabel.Text = player.Name
+                
+                if bounty > 0 then
+                    esp.LevelLabel.Text = string.format("Bounty: %s | HP: %d%%", formatNumber(bounty), hp)
+                else
+                    esp.LevelLabel.Text = string.format("Level: %d | HP: %d%%", level, hp)
+                end
+                
+                esp.HealthFill.Size = UDim2.new(hp / 100, 0, 1, 0)
+                if hp > 50 then
+                    esp.HealthFill.BackgroundColor3 = Color3.fromRGB(0, 255, 100)
+                elseif hp > 25 then
+                    esp.HealthFill.BackgroundColor3 = Color3.fromRGB(255, 200, 50)
+                else
+                    esp.HealthFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
+                end
+                
+                local pvpText = inPvP and "PvP: ON" or "PvP: OFF"
+                esp.DistLabel.Text = string.format("Dist: %dm | %s", math.floor(dist), pvpText)
+                
+                if State.LockedPlayer == player then
+                    esp.LevelLabel.TextColor3 = Color3.fromRGB(255, 50, 50)
+                else
+                    esp.LevelLabel.TextColor3 = Color3.fromRGB(255, 200, 50)
+                end
+            end
         end
     end
 end
@@ -363,17 +358,23 @@ local function stopFly()
     end
     State.IsFlying = false
     
-    local char, hum = getCharacter(LocalPlayer)
+    local _, hum = getCharacter(LocalPlayer)
     if hum then
         hum.PlatformStand = false
+    end
+    
+    local _, _, localRoot = getCharacter(LocalPlayer)
+    if localRoot then
+        local bodyVel = localRoot:FindFirstChild("BluezyFlyVel")
+        if bodyVel then
+            bodyVel:Destroy()
+        end
     end
 end
 
 local function startFlyToTarget()
     stopFly()
-    
     State.IsFlying = true
-    local lastPos = nil
     
     State.FlyConnection = RunService.Heartbeat:Connect(function()
         if not State.LockedPlayer then
@@ -385,26 +386,21 @@ local function startFlyToTarget()
         local localChar, localHum, localRoot = getCharacter(LocalPlayer)
         
         if not targetRoot or not localRoot then
-            stopFly()
             return
         end
         
         if targetHum.Health <= 0 then
             stopFly()
-            State.LockedPlayer = nil
             return
         end
         
-        -- คำนวณตำแหน่งเป้าหมาย: เหนือหัวเป้าหมาย
         local targetPos = targetRoot.Position + Vector3.new(0, Config.FlyHeight, 0)
         local direction = (targetPos - localRoot.Position)
         local distance = direction.Magnitude
         
-        -- บินไปหา
         if distance > 2 then
             localHum.PlatformStand = true
             
-            -- ใช้ BodyVelocity สำหรับการบิน
             local bodyVel = localRoot:FindFirstChild("BluezyFlyVel")
             if not bodyVel then
                 bodyVel = Instance.new("BodyVelocity")
@@ -417,7 +413,6 @@ local function startFlyToTarget()
             local flyVel = direction.Unit * math.min(Config.FlySpeed, distance * 10)
             bodyVel.Velocity = flyVel
             
-            -- หมุนตัวหันไปที่เป้า
             local lookPos = targetRoot.Position
             local lookDir = (lookPos - localRoot.Position)
             if lookDir.Magnitude > 0.1 then
@@ -425,10 +420,8 @@ local function startFlyToTarget()
                 localRoot.CFrame = localRoot.CFrame:Lerp(lookCFrame, 0.3)
             end
         else
-            -- ถึงเป้าแล้ว — ล็อคเหนือหัว
             local bodyVel = localRoot:FindFirstChild("BluezyFlyVel")
             if bodyVel then
-                -- ตามตำแหน่งเป้าแบบ smooth
                 local targetFollowPos = targetRoot.Position + Vector3.new(0, Config.FlyHeight, 0)
                 bodyVel.Velocity = (targetFollowPos - localRoot.Position) * 10
             end
@@ -444,14 +437,12 @@ local function findWeapon()
     local char = LocalPlayer.Character
     if not char then return nil end
     
-    -- หาอาวุธในตัวละคร
     for _, item in ipairs(char:GetChildren()) do
         if item:IsA("Tool") then
             return item
         end
     end
     
-    -- หาใน backpack
     local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
     if backpack then
         for _, item in ipairs(backpack:GetChildren()) do
@@ -467,34 +458,31 @@ local function findWeapon()
 end
 
 local function attackM1()
-    local char = LocalPlayer.Character
-    if not char then return end
-    
-    -- ใช้ VirtualUser สำหรับจำลองการคลิก
-    local VirtualUser = game:GetService("VirtualUser")
     VirtualUser:CaptureController()
     VirtualUser:ClickButton1(Vector2.new())
 end
 
-local function useSkill(skillName)
-    local char = LocalPlayer.Character
-    if not char then return end
-    
-    local tool = findWeapon()
-    if not tool then return end
-    
-    -- ลอง activate skill
-    local skillNames = { "Z", "X", "C", "V", "F" }
-    
-    for _, key in ipairs(skillNames) do
-        local args = {
-            [1] = key
-        }
-        pcall(function()
-            -- Blox Fruits skill activation
-            game:GetService("ReplicatedStorage").Remotes.Input:FireServer(key)
-        end)
-    end
+local function useSkill(skillKey)
+    pcall(function()
+        local ReplicatedStorage = game:GetService("ReplicatedStorage")
+        local remotes = ReplicatedStorage:FindFirstChild("Remotes")
+        if remotes then
+            local input = remotes:FindFirstChild("Input")
+            if input then
+                input:FireServer(skillKey)
+                return
+            end
+        end
+        
+        -- fallback: ลอง CommCtrl
+        local comm = ReplicatedStorage:FindFirstChild("Comm")
+        if comm then
+            local commE = comm:FindFirstChild("CommE")
+            if commE then
+                commE:FireServer(skillKey)
+            end
+        end
+    end)
 end
 
 local function stopAttack()
@@ -512,6 +500,7 @@ local function startAttack()
     local attackTimer = 0
     local skillTimer = 0
     local comboStep = 1
+    local skills = { "Z", "X", "C", "V" }
     
     State.AttackConnection = RunService.Heartbeat:Connect(function(dt)
         if not State.LockedPlayer then
@@ -530,37 +519,23 @@ local function startAttack()
         
         local dist = getDistance(localRoot, targetRoot)
         
-        -- โจมตีเมื่ออยู่ในระยะ
         if dist <= Config.AttackRange then
             attackTimer = attackTimer + dt
             skillTimer = skillTimer + dt
             
-            -- M1 spam
             if attackTimer >= Config.AttackCooldown then
                 attackTimer = 0
                 attackM1()
                 
-                -- หันหน้าไปที่เป้าตอนโจมตี
                 local lookCFrame = CFrame.lookAt(localRoot.Position, targetRoot.Position)
                 localRoot.CFrame = localRoot.CFrame:Lerp(lookCFrame, 0.5)
             end
             
-            -- ใช้สกิลใน combo
             if Config.UseSkillInCombo and skillTimer >= Config.SkillDelay then
                 skillTimer = 0
-                local skills = { "Z", "X", "C", "V" }
                 local currentSkill = skills[comboStep]
                 if currentSkill then
-                    pcall(function()
-                        local ReplicatedStorage = game:GetService("ReplicatedStorage")
-                        local inputRemote = ReplicatedStorage:FindFirstChild("Remotes")
-                        if inputRemote then
-                            local input = inputRemote:FindFirstChild("Input")
-                            if input then
-                                input:FireServer(currentSkill)
-                            end
-                        end
-                    end)
+                    useSkill(currentSkill)
                     comboStep = comboStep + 1
                     if comboStep > #skills then
                         comboStep = 1
@@ -572,7 +547,7 @@ local function startAttack()
 end
 
 -- ============================================
--- Lock / Unlock Target
+-- Lock / Unlock
 -- ============================================
 
 local function lockTarget(player)
@@ -588,24 +563,19 @@ local function lockTarget(player)
     end
 end
 
--- ============================================
--- Agnes 2.5 Flash Lock (ค้นหาเป้าอัตโนมัติ)
--- ============================================
-
 local function findBestTarget()
     local bestPlayer = nil
     local bestScore = -math.huge
     
     for _, player in ipairs(getValidPlayers()) do
-        local char, hum, root = getCharacter(player)
-        local localChar, _, localRoot = getCharacter(LocalPlayer)
+        local _, _, root = getCharacter(player)
+        local _, _, localRoot = getCharacter(LocalPlayer)
         if root and localRoot then
             local dist = getDistance(root, localRoot)
             local bounty = getPlayerBounty(player)
             local hp = getHealthPercent(player)
             local inPvP = isPlayerInPvP(player)
             
-            -- คะแนน: น้ำหนัก bounty > ระยะ > HP
             local score = 0
             if inPvP then score = score + 1000 end
             score = score + (bounty / 100)
@@ -623,38 +593,41 @@ local function findBestTarget()
 end
 
 -- ============================================
--- UI System
+-- UI
 -- ============================================
+
+-- หา parent ที่ใช้ได้
+local function getGuiParent()
+    local success, result = pcall(function()
+        return CoreGui
+    end)
+    if success and result then
+        return result
+    end
+    return LocalPlayer:WaitForChild("PlayerGui")
+end
+
+local guiParent = getGuiParent()
 
 local ScreenGui = Instance.new("ScreenGui")
 ScreenGui.Name = "BluezyBountyHunter"
 ScreenGui.ResetOnSpawn = false
 ScreenGui.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
-ScreenGui.Parent = game:GetService("CoreGui")
-
--- หา CoreGui ที่ถูกต้อง
-local success, err = pcall(function()
-    ScreenGui.Parent = game:GetService("CoreGui")
-end)
-if not success then
-    ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui")
-end
+ScreenGui.Parent = guiParent
 
 -- Main Frame
 local MainFrame = Instance.new("Frame")
 MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 420, 0, 500)
-MainFrame.Position = UDim2.new(0.5, -210, 0.5, -250)
+MainFrame.Size = UDim2.new(0, 420, 0, 520)
+MainFrame.Position = UDim2.new(0.5, -210, 0.5, -260)
 MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 25)
 MainFrame.BorderSizePixel = 0
 MainFrame.Active = true
-MainFrame.Draggable = true
 
 local mainCorner = Instance.new("UICorner")
 mainCorner.CornerRadius = UDim.new(0, 12)
 mainCorner.Parent = MainFrame
 
--- Gradient
 local gradient = Instance.new("UIGradient")
 gradient.Color = ColorSequence.new({
     Color3.fromRGB(20, 20, 35),
@@ -663,7 +636,6 @@ gradient.Color = ColorSequence.new({
 gradient.Rotation = 90
 gradient.Parent = MainFrame
 
--- Stroke
 local stroke = Instance.new("UIStroke")
 stroke.Color = Color3.fromRGB(100, 50, 255)
 stroke.Thickness = 2
@@ -681,35 +653,32 @@ local titleCorner = Instance.new("UICorner")
 titleCorner.CornerRadius = UDim.new(0, 12)
 titleCorner.Parent = TitleBar
 
--- Title text
 local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -80, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "Bluezy Bounty Hunter v1.0"
+TitleLabel.Text = "Bluezy Bounty Hunter v1.1"
 TitleLabel.TextColor3 = Color3.fromRGB(150, 100, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 16
 TitleLabel.TextXAlignment = Enum.TextXAlignment.Left
 TitleLabel.Parent = TitleBar
 
--- Minimize button
 local MinBtn = Instance.new("TextButton")
 MinBtn.Size = UDim2.new(0, 30, 0, 30)
 MinBtn.Position = UDim2.new(1, -70, 0.5, -15)
 MinBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
 MinBtn.BorderSizePixel = 0
-MinBtn.Text = "—"
+MinBtn.Text = "-"
 MinBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 MinBtn.Font = Enum.Font.GothamBold
-MinBtn.TextSize = 14
+MinBtn.TextSize = 16
 MinBtn.Parent = TitleBar
 
 local minCorner = Instance.new("UICorner")
 minCorner.CornerRadius = UDim.new(0, 6)
 minCorner.Parent = MinBtn
 
--- Close button
 local CloseBtn = Instance.new("TextButton")
 CloseBtn.Size = UDim2.new(0, 30, 0, 30)
 CloseBtn.Position = UDim2.new(1, -35, 0.5, -15)
@@ -725,93 +694,102 @@ local closeCorner = Instance.new("UICorner")
 closeCorner.CornerRadius = UDim.new(0, 6)
 closeCorner.Parent = CloseBtn
 
--- Content area
-local ContentArea = Instance.new("Frame")
-ContentArea.Size = UDim2.new(1, -20, 1, -50)
-ContentArea.Position = UDim2.new(0, 10, 0, 45)
-ContentArea.BackgroundTransparency = 1
-ContentArea.Parent = MainFrame
+-- Scroll Frame สำหรับ content
+local ContentScroll = Instance.new("ScrollingFrame")
+ContentScroll.Size = UDim2.new(1, -20, 1, -50)
+ContentScroll.Position = UDim2.new(0, 10, 0, 45)
+ContentScroll.BackgroundTransparency = 1
+ContentScroll.BorderSizePixel = 0
+ContentScroll.ScrollBarThickness = 4
+ContentScroll.ScrollBarImageColor3 = Color3.fromRGB(100, 50, 255)
+ContentScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
+ContentScroll.Agnes 2.5 FlashmaticCanvasSize = Enum.Agnes 2.5 FlashmaticSize.Y
+ContentScroll.Parent = MainFrame
 
--- Scroll layout
 local scrollLayout = Instance.new("UIListLayout")
 scrollLayout.SortOrder = Enum.SortOrder.LayoutOrder
 scrollLayout.Padding = UDim.new(0, 8)
-scrollLayout.Parent = ContentArea
+scrollLayout.Parent = ContentScroll
+
+local scrollPadding = Instance.new("UIPadding")
+scrollPadding.PaddingTop = UDim.new(0, 5)
+scrollPadding.PaddingBottom = UDim.new(0, 5)
+scrollPadding.PaddingLeft = UDim.new(0, 5)
+scrollPadding.PaddingRight = UDim.new(0, 5)
+scrollPadding.Parent = ContentScroll
 
 -- ============================================
--- Helper: Create Toggle
+-- UI Helpers
 -- ============================================
+
 local function createToggle(text, defaultState, callback)
     local toggleFrame = Instance.new("Frame")
     toggleFrame.Size = UDim2.new(1, 0, 0, 36)
     toggleFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     toggleFrame.BorderSizePixel = 0
     
-    local toggleCorner = Instance.new("UICorner")
-    toggleCorner.CornerRadius = UDim.new(0, 8)
-    toggleCorner.Parent = toggleFrame
+    local tc = Instance.new("UICorner")
+    tc.CornerRadius = UDim.new(0, 8)
+    tc.Parent = toggleFrame
     
-    local toggleLabel = Instance.new("TextLabel")
-    toggleLabel.Size = UDim2.new(1, -60, 1, 0)
-    toggleLabel.Position = UDim2.new(0, 10, 0, 0)
-    toggleLabel.BackgroundTransparency = 1
-    toggleLabel.Text = text
-    toggleLabel.TextColor3 = Color3.fromRGB(220, 220, 240)
-    toggleLabel.Font = Enum.Font.Gotham
-    toggleLabel.TextSize = 13
-    toggleLabel.TextXAlignment = Enum.TextXAlignment.Left
-    toggleLabel.Parent = toggleFrame
+    local tLabel = Instance.new("TextLabel")
+    tLabel.Size = UDim2.new(1, -70, 1, 0)
+    tLabel.Position = UDim2.new(0, 10, 0, 0)
+    tLabel.BackgroundTransparency = 1
+    tLabel.Text = text
+    tLabel.TextColor3 = Color3.fromRGB(220, 220, 240)
+    tLabel.Font = Enum.Font.Gotham
+    tLabel.TextSize = 13
+    tLabel.TextXAlignment = Enum.TextXAlignment.Left
+    tLabel.Parent = toggleFrame
     
-    local toggleBtn = Instance.new("TextButton")
-    toggleBtn.Size = UDim2.new(0, 50, 0, 24)
-    toggleBtn.Position = UDim2.new(1, -60, 0.5, -12)
-    toggleBtn.BackgroundColor3 = defaultState and Color3.fromRGB(0, 180, 80) or Color3.fromRGB(60, 60, 70)
-    toggleBtn.BorderSizePixel = 0
-    toggleBtn.Text = defaultState and "ON" or "OFF"
-    toggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-    toggleBtn.Font = Enum.Font.GothamBold
-    toggleBtn.TextSize = 11
-    toggleBtn.Parent = toggleFrame
+    local tBtn = Instance.new("TextButton")
+    tBtn.Size = UDim2.new(0, 50, 0, 24)
+    tBtn.Position = UDim2.new(1, -60, 0.5, -12)
+    tBtn.BackgroundColor3 = defaultState and Color3.fromRGB(0, 180, 80) or Color3.fromRGB(60, 60, 70)
+    tBtn.BorderSizePixel = 0
+    tBtn.Text = defaultState and "ON" or "OFF"
+    tBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    tBtn.Font = Enum.Font.GothamBold
+    tBtn.TextSize = 11
+    tBtn.Parent = toggleFrame
     
-    local btnCorner = Instance.new("UICorner")
-    btnCorner.CornerRadius = UDim.new(0, 6)
-    btnCorner.Parent = toggleBtn
+    local bc = Instance.new("UICorner")
+    bc.CornerRadius = UDim.new(0, 6)
+    bc.Parent = tBtn
     
     local state = defaultState
     
-    toggleBtn.MouseButton1Click:Connect(function()
+    tBtn.MouseButton1Click:Connect(function()
         state = not state
-        toggleBtn.BackgroundColor3 = state and Color3.fromRGB(0, 180, 80) or Color3.fromRGB(60, 60, 70)
-        toggleBtn.Text = state and "ON" or "OFF"
+        tBtn.BackgroundColor3 = state and Color3.fromRGB(0, 180, 80) or Color3.fromRGB(60, 60, 70)
+        tBtn.Text = state and "ON" or "OFF"
         callback(state)
     end)
     
-    return toggleFrame, toggleBtn
+    return toggleFrame
 end
 
--- ============================================
--- Helper: Create Slider
--- ============================================
 local function createSlider(text, minVal, maxVal, defaultVal, callback)
     local sliderFrame = Instance.new("Frame")
     sliderFrame.Size = UDim2.new(1, 0, 0, 50)
     sliderFrame.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
     sliderFrame.BorderSizePixel = 0
     
-    local sliderCorner = Instance.new("UICorner")
-    sliderCorner.CornerRadius = UDim.new(0, 8)
-    sliderCorner.Parent = sliderFrame
+    local sc = Instance.new("UICorner")
+    sc.CornerRadius = UDim.new(0, 8)
+    sc.Parent = sliderFrame
     
-    local label = Instance.new("TextLabel")
-    label.Size = UDim2.new(1, -20, 0, 20)
-    label.Position = UDim2.new(0, 10, 0, 5)
-    label.BackgroundTransparency = 1
-    label.Text = text .. ": " .. tostring(defaultVal)
-    label.TextColor3 = Color3.fromRGB(220, 220, 240)
-    label.Font = Enum.Font.Gotham
-    label.TextSize = 12
-    label.TextXAlignment = Enum.TextXAlignment.Left
-    label.Parent = sliderFrame
+    local sLabel = Instance.new("TextLabel")
+    sLabel.Size = UDim2.new(1, -20, 0, 20)
+    sLabel.Position = UDim2.new(0, 10, 0, 5)
+    sLabel.BackgroundTransparency = 1
+    sLabel.Text = text .. ": " .. tostring(defaultVal)
+    sLabel.TextColor3 = Color3.fromRGB(220, 220, 240)
+    sLabel.Font = Enum.Font.Gotham
+    sLabel.TextSize = 12
+    sLabel.TextXAlignment = Enum.TextXAlignment.Left
+    sLabel.Parent = sliderFrame
     
     local bar = Instance.new("Frame")
     bar.Size = UDim2.new(1, -20, 0, 6)
@@ -819,18 +797,18 @@ local function createSlider(text, minVal, maxVal, defaultVal, callback)
     bar.BackgroundColor3 = Color3.fromRGB(50, 50, 60)
     bar.BorderSizePixel = 0
     
-    local barCorner = Instance.new("UICorner")
-    barCorner.CornerRadius = UDim.new(0, 3)
-    barCorner.Parent = bar
+    local barC = Instance.new("UICorner")
+    barC.CornerRadius = UDim.new(0, 3)
+    barC.Parent = bar
     
     local fill = Instance.new("Frame")
     fill.Size = UDim2.new((defaultVal - minVal) / (maxVal - minVal), 0, 1, 0)
     fill.BackgroundColor3 = Color3.fromRGB(100, 80, 255)
     fill.BorderSizePixel = 0
     
-    local fillCorner = Instance.new("UICorner")
-    fillCorner.CornerRadius = UDim.new(0, 3)
-    fillCorner.Parent = fill
+    local fillC = Instance.new("UICorner")
+    fillC.CornerRadius = UDim.new(0, 3)
+    fillC.Parent = fill
     
     local knob = Instance.new("Frame")
     knob.Size = UDim2.new(0, 16, 0, 16)
@@ -838,9 +816,9 @@ local function createSlider(text, minVal, maxVal, defaultVal, callback)
     knob.BackgroundColor3 = Color3.fromRGB(255, 255, 255)
     knob.BorderSizePixel = 0
     
-    local knobCorner = Instance.new("UICorner")
-    knobCorner.CornerRadius = UDim.new(1, 0)
-    knobCorner.Parent = knob
+    local knobC = Instance.new("UICorner")
+    knobC.CornerRadius = UDim.new(1, 0)
+    knobC.Parent = knob
     
     fill.Parent = bar
     knob.Parent = bar
@@ -854,7 +832,7 @@ local function createSlider(text, minVal, maxVal, defaultVal, callback)
         local value = math.floor(minVal + (maxVal - minVal) * relative)
         fill.Size = UDim2.new(relative, 0, 1, 0)
         knob.Position = UDim2.new(relative, -8, 0.5, -8)
-        label.Text = text .. ": " .. tostring(value)
+        sLabel.Text = text .. ": " .. tostring(value)
         callback(value)
     end
     
@@ -883,27 +861,30 @@ local function createSlider(text, minVal, maxVal, defaultVal, callback)
     return sliderFrame
 end
 
+local function createSectionLabel(text)
+    local lbl = Instance.new("TextLabel")
+    lbl.Size = UDim2.new(1, 0, 0, 20)
+    lbl.BackgroundTransparency = 1
+    lbl.Text = "-- " .. text .. " --"
+    lbl.TextColor3 = Color3.fromRGB(150, 100, 255)
+    lbl.Font = Enum.Font.GothamBold
+    lbl.TextSize = 12
+    lbl.TextXAlignment = Enum.TextXAlignment.Center
+    return lbl
+end
+
 -- ============================================
--- Build UI Elements
+-- Build UI
 -- ============================================
 
--- Section: Target Selection
-local Section1Label = Instance.new("TextLabel")
-Section1Label.Size = UDim2.new(1, 0, 0, 20)
-Section1Label.BackgroundTransparency = 1
-Section1Label.Text = "─── เลือกเป้าหมาย ───"
-Section1Label.TextColor3 = Color3.fromRGB(150, 100, 255)
-Section1Label.Font = Enum.Font.GothamBold
-Section1Label.TextSize = 12
-Section1Label.TextXAlignment = Enum.TextXAlignment.Center
-Section1Label.Parent = ContentArea
+-- Section: Target
+createSectionLabel("เลือกเป้าหมาย").Parent = ContentScroll
 
--- Player dropdown
 local PlayerDropdown = Instance.new("TextButton")
 PlayerDropdown.Size = UDim2.new(1, 0, 0, 36)
 PlayerDropdown.BackgroundColor3 = Color3.fromRGB(30, 30, 45)
 PlayerDropdown.BorderSizePixel = 0
-PlayerDropdown.Text = "เลือกผู้เล่น..."
+PlayerDropdown.Text = "  เลือกผู้เล่น..."
 PlayerDropdown.TextColor3 = Color3.fromRGB(220, 220, 240)
 PlayerDropdown.Font = Enum.Font.Gotham
 PlayerDropdown.TextSize = 13
@@ -913,35 +894,38 @@ local ddCorner = Instance.new("UICorner")
 ddCorner.CornerRadius = UDim.new(0, 8)
 ddCorner.Parent = PlayerDropdown
 
-local ddPadding = Instance.new("UIPadding")
-ddPadding.PaddingLeft = UDim.new(0, 10)
-ddPadding.Parent = PlayerDropdown
+PlayerDropdown.Parent = ContentScroll
 
-PlayerDropdown.Parent = ContentArea
+-- Dropdown container (แยกออกมาเป็น frame ต่างหาก)
+local DropdownContainer = Instance.new("Frame")
+DropdownContainer.Size = UDim2.new(1, 0, 0, 0)
+DropdownContainer.BackgroundTransparency = 1
+DropdownContainer.Parent = ContentScroll
 
--- Dropdown list
 local DropdownList = Instance.new("Frame")
 DropdownList.Size = UDim2.new(1, 0, 0, 0)
-DropdownList.Position = UDim2.new(0, 0, 0, 40)
 DropdownList.BackgroundColor3 = Color3.fromRGB(20, 20, 30)
 DropdownList.BorderSizePixel = 0
 DropdownList.Visible = false
 DropdownList.ZIndex = 100
 
-local ddListCorner = Instance.new("UICorner")
-ddListCorner.CornerRadius = UDim.new(0, 8)
-ddListCorner.Parent = DropdownList
+local ddListCorner2 = Instance.new("UICorner")
+ddListCorner2.CornerRadius = UDim.new(0, 8)
+ddListCorner2.Parent = DropdownList
 
 local ddListLayout = Instance.new("UIListLayout")
 ddListLayout.SortOrder = Enum.SortOrder.LayoutOrder
 ddListLayout.Padding = UDim.new(0, 2)
 ddListLayout.Parent = DropdownList
 
-local ddListParent = Instance.new("Frame")
-ddListParent.Size = UDim2.new(1, 0, 0, 0)
-ddListParent.BackgroundTransparency = 1
-ddListParent.Parent = ContentArea
-DropdownList.Parent = ddListParent
+local ddListPadding = Instance.new("UIPadding")
+ddListPadding.PaddingTop = UDim.new(0, 4)
+ddListPadding.PaddingBottom = UDim.new(0, 4)
+ddListPadding.PaddingLeft = UDim.new(0, 4)
+ddListPadding.PaddingRight = UDim.new(0, 4)
+ddListPadding.Parent = DropdownList
+
+DropdownList.Parent = DropdownContainer
 
 local dropdownOpen = false
 
@@ -952,23 +936,22 @@ local function refreshDropdown()
         end
     end
     
-    local players = getValidPlayers()
-    DropdownList.Size = UDim2.new(1, 0, 0, math.min(#players * 32, 160))
+    local playersList = getValidPlayers()
+    local count = math.min(#playersList, 8)
+    DropdownList.Size = UDim2.new(1, 0, 0, count * 32 + 8)
+    DropdownContainer.Size = UDim2.new(1, 0, 0, count * 32 + 8)
     
-    for _, player in ipairs(players) do
+    for _, player in ipairs(playersList) do
         local item = Instance.new("TextButton")
-        item.Size = UDim2.new(1, -4, 0, 30)
-        item.Position = UDim2.new(0, 2, 0, 0)
+        item.Size = UDim2.new(1, 0, 0, 30)
         item.BackgroundColor3 = Color3.fromRGB(35, 35, 50)
         item.BorderSizePixel = 0
         item.Text = ""
-        item.TextColor3 = Color3.fromRGB(255, 255, 255)
-        item.Font = Enum.Font.Gotham
-        item.TextSize = 12
+        item.ZIndex = 101
         
-        local itemCorner = Instance.new("UICorner")
-        itemCorner.CornerRadius = UDim.new(0, 6)
-        itemCorner.Parent = item
+        local itemC = Instance.new("UICorner")
+        itemC.CornerRadius = UDim.new(0, 6)
+        itemC.Parent = item
         
         local itemLabel = Instance.new("TextLabel")
         itemLabel.Size = UDim2.new(1, -10, 1, 0)
@@ -978,11 +961,12 @@ local function refreshDropdown()
         itemLabel.Font = Enum.Font.Gotham
         itemLabel.TextSize = 12
         itemLabel.TextXAlignment = Enum.TextXAlignment.Left
+        itemLabel.ZIndex = 102
         itemLabel.Parent = item
         
-        local char, hum, root = getCharacter(player)
-        local localChar, _, localRoot = getCharacter(LocalPlayer)
-        local dist = root and localRoot and getDistance(root, localRoot) or 0
+        local _, _, root = getCharacter(player)
+        local _, _, localRoot = getCharacter(LocalPlayer)
+        local dist = (root and localRoot) and getDistance(root, localRoot) or 0
         local level = getPlayerLevel(player)
         local bounty = getPlayerBounty(player)
         local inPvP = isPlayerInPvP(player)
@@ -1000,9 +984,10 @@ local function refreshDropdown()
         
         item.MouseButton1Click:Connect(function()
             State.SelectedPlayer = player
-            PlayerDropdown.Text = infoText
+            PlayerDropdown.Text = "  " .. infoText
             DropdownList.Visible = false
             dropdownOpen = false
+            DropdownContainer.Size = UDim2.new(1, 0, 0, 0)
         end)
         
         item.Parent = DropdownList
@@ -1014,6 +999,8 @@ PlayerDropdown.MouseButton1Click:Connect(function()
     DropdownList.Visible = dropdownOpen
     if dropdownOpen then
         refreshDropdown()
+    else
+        DropdownContainer.Size = UDim2.new(1, 0, 0, 0)
     end
 end)
 
@@ -1022,14 +1009,16 @@ local RefreshBtn = Instance.new("TextButton")
 RefreshBtn.Size = UDim2.new(1, 0, 0, 32)
 RefreshBtn.BackgroundColor3 = Color3.fromRGB(40, 40, 60)
 RefreshBtn.BorderSizePixel = 0
-RefreshBtn.Text = "🔄 Refresh รายชื่อผู้เล่น"
+RefreshBtn.Text = "Refresh รายชื่อผู้เล่น"
 RefreshBtn.TextColor3 = Color3.fromRGB(200, 200, 255)
 RefreshBtn.Font = Enum.Font.Gotham
 RefreshBtn.TextSize = 12
 
-local refreshCorner = Instance.new("UICorner")
-refreshCorner.CornerRadius = UDim.new(0, 8)
-refreshCorner.Parent = RefreshBtn
+local refreshC = Instance.new("UICorner")
+refreshC.CornerRadius = UDim.new(0, 8)
+refreshC.Parent = RefreshBtn
+
+RefreshBtn.Parent = ContentScroll
 
 RefreshBtn.MouseButton1Click:Connect(function()
     refreshDropdown()
@@ -1037,98 +1026,86 @@ RefreshBtn.MouseButton1Click:Connect(function()
     dropdownOpen = true
 end)
 
-RefreshBtn.Parent = ContentArea
-
--- Lock / Unlock button
+-- Lock button
 local LockBtn = Instance.new("TextButton")
 LockBtn.Size = UDim2.new(1, 0, 0, 40)
 LockBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 80)
 LockBtn.BorderSizePixel = 0
-LockBtn.Text = "🔒 LOCK TARGET"
+LockBtn.Text = "LOCK TARGET"
 LockBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
 LockBtn.Font = Enum.Font.GothamBold
 LockBtn.TextSize = 14
 
-local lockCorner = Instance.new("UICorner")
-lockCorner.CornerRadius = UDim.new(0, 8)
-lockCorner.Parent = LockBtn
+local lockC = Instance.new("UICorner")
+lockC.CornerRadius = UDim.new(0, 8)
+lockC.Parent = LockBtn
 
-LockBtn.Parent = ContentArea
+LockBtn.Parent = ContentScroll
 
 LockBtn.MouseButton1Click:Connect(function()
     if State.LockedPlayer then
         lockTarget(nil)
-        LockBtn.Text = "🔒 LOCK TARGET"
+        LockBtn.Text = "LOCK TARGET"
         LockBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 80)
     else
         if State.SelectedPlayer then
             lockTarget(State.SelectedPlayer)
-            LockBtn.Text = "🔓 UNLOCK TARGET"
+            LockBtn.Text = "UNLOCK TARGET"
             LockBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
+        else
+            notify("Bluezy", "เลือกผู้เล่นก่อน!")
         end
     end
 end)
 
 -- Section: Features
-local Section2Label = Instance.new("TextLabel")
-Section2Label.Size = UDim2.new(1, 0, 0, 20)
-Section2Label.BackgroundTransparency = 1
-Section2Label.Text = "─── ฟีเจอร์ ───"
-Section2Label.TextColor3 = Color3.fromRGB(150, 100, 255)
-Section2Label.Font = Enum.Font.GothamBold
-Section2Label.TextSize = 12
-Section2Label.TextXAlignment = Enum.TextXAlignment.Center
-Section2Label.Parent = ContentArea
+createSectionLabel("ฟีเจอร์").Parent = ContentScroll
 
--- ESP Toggle
-local esptoggle = createToggle("ESP แสดงสถานะผู้เล่น", true, function(state)
+local espToggleFrame = createToggle("ESP แสดงสถานะผู้เล่น", true, function(state)
     State.ESPEnabled = state
 end)
-esptoggle.Parent = ContentArea
+espToggleFrame.Parent = ContentScroll
 
--- Agnes 2.5 Flash Lock Toggle
-local autolockToggle = createToggle("Agnes 2.5 Flash Lock (ค้นหาเป้าอัตโนมัติ)", false, function(state)
+local Agnes 2.5 FlashLockToggleFrame = createToggle("Agnes 2.5 Flash Lock (ค้นหาเป้าอัตโนมัติ)", false, function(state)
     State.Agnes 2.5 FlashLockEnabled = state
 end)
-autolockToggle.Parent = ContentArea
+Agnes 2.5 FlashLockToggleFrame.Parent = ContentScroll
 
--- Skill Toggle
-local skillToggle = createToggle("ใช้สกิลใน Combo", true, function(state)
+local skillToggleFrame = createToggle("ใช้สกิลใน Combo", true, function(state)
     Config.UseSkillInCombo = state
 end)
-skillToggle.Parent = ContentArea
+skillToggleFrame.Parent = ContentScroll
 
 -- Sliders
 local flySpeedSlider = createSlider("ความเร็วบิน", 50, 500, Config.FlySpeed, function(val)
     Config.FlySpeed = val
 end)
-flySpeedSlider.Parent = ContentArea
+flySpeedSlider.Parent = ContentScroll
 
 local flyHeightSlider = createSlider("ระยะเหนือหัว", 5, 60, Config.FlyHeight, function(val)
     Config.FlyHeight = val
 end)
-flyHeightSlider.Parent = ContentArea
+flyHeightSlider.Parent = ContentScroll
 
 local cooldownSlider = createSlider("หน่วง M1 (ms)", 50, 500, Config.AttackCooldown * 1000, function(val)
     Config.AttackCooldown = val / 1000
 end)
-cooldownSlider.Parent = ContentArea
+cooldownSlider.Parent = ContentScroll
 
--- Minimize logic
+-- Minimize
 local minimized = false
 local originalSize = MainFrame.Size
-local originalPos = MainFrame.Position
 
 MinBtn.MouseButton1Click:Connect(function()
     minimized = not minimized
     if minimized then
         MainFrame.Size = UDim2.new(0, 420, 0, 40)
-        ContentArea.Visible = false
+        ContentScroll.Visible = false
         MinBtn.Text = "+"
     else
         MainFrame.Size = originalSize
-        ContentArea.Visible = true
-        MinBtn.Text = "—"
+        ContentScroll.Visible = true
+        MinBtn.Text = "-"
     end
 end)
 
@@ -1138,11 +1115,57 @@ CloseBtn.MouseButton1Click:Connect(function()
     for player in pairs(State.ESPObjects) do
         removeESP(player)
     end
+    for _, conn in ipairs(State.Connections) do
+        conn:Disconnect()
+    end
     ScreenGui:Destroy()
 end)
 
 -- ============================================
--- Init ESP for all players
+-- Drag (Mobile + PC)
+-- ============================================
+
+local dragging = false
+local dragStart = nil
+local startPos = nil
+
+local function updateDrag(input)
+    if dragging then
+        local delta = input.Position - dragStart
+        MainFrame.Position = UDim2.new(
+            startPos.X.Scale, 
+            startPos.X.Offset + delta.X,
+            startPos.Y.Scale, 
+            startPos.Y.Offset + delta.Y
+        )
+    end
+end
+
+TitleBar.InputBegan:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = true
+        dragStart = input.Position
+        startPos = MainFrame.Position
+    end
+end)
+
+TitleBar.InputEnded:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseButton1 
+    or input.UserInputType == Enum.UserInputType.Touch then
+        dragging = false
+    end
+end)
+
+UserInputService.InputChanged:Connect(function(input)
+    if input.UserInputType == Enum.UserInputType.MouseMovement 
+    or input.UserInputType == Enum.UserInputType.Touch then
+        updateDrag(input)
+    end
+end)
+
+-- ============================================
+-- Init ESP
 -- ============================================
 
 for _, player in ipairs(Players:GetPlayers()) do
@@ -1159,28 +1182,29 @@ Players.PlayerRemoving:Connect(function(player)
     removeESP(player)
     if State.LockedPlayer == player then
         lockTarget(nil)
-        LockBtn.Text = "🔒 LOCK TARGET"
+        LockBtn.Text = "LOCK TARGET"
         LockBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 80)
     end
     if State.SelectedPlayer == player then
         State.SelectedPlayer = nil
-        PlayerDropdown.Text = "เลือกผู้เล่น..."
+        PlayerDropdown.Text = "  เลือกผู้เล่น..."
     end
 end)
 
 -- ============================================
--- Update Loop
+-- Loops
 -- ============================================
 
+-- ESP update
 task.spawn(function()
     while task.wait(Config.ESPUpdateRate) do
         if State.ESPEnabled then
-            updateESP()
+            pcall(updateESP)
         end
     end
 end)
 
--- Agnes 2.5 Flash Lock loop
+-- Agnes 2.5 Flash lock + target check
 task.spawn(function()
     while task.wait(Config.TargetRefreshRate) do
         if State.Agnes 2.5 FlashLockEnabled and not State.LockedPlayer then
@@ -1188,25 +1212,23 @@ task.spawn(function()
             if target then
                 State.SelectedPlayer = target
                 lockTarget(target)
-                LockBtn.Text = "🔓 UNLOCK TARGET"
+                LockBtn.Text = "UNLOCK TARGET"
                 LockBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
             end
         end
         
-        -- ตรวจสอบเป้าตาย
         if State.LockedPlayer and not isPlayerAlive(State.LockedPlayer) then
             lockTarget(nil)
-            LockBtn.Text = "🔒 LOCK TARGET"
+            LockBtn.Text = "LOCK TARGET"
             LockBtn.BackgroundColor3 = Color3.fromRGB(60, 20, 80)
             
-            -- Agnes 2.5 Flash หาเป้าใหม่
             if State.Agnes 2.5 FlashLockEnabled then
                 task.wait(1)
                 local target = findBestTarget()
                 if target then
                     State.SelectedPlayer = target
                     lockTarget(target)
-                    LockBtn.Text = "🔓 UNLOCK TARGET"
+                    LockBtn.Text = "UNLOCK TARGET"
                     LockBtn.BackgroundColor3 = Color3.fromRGB(180, 40, 40)
                 end
             end
@@ -1215,19 +1237,15 @@ task.spawn(function()
 end)
 
 -- Anti AFK
-local VirtualConnection = LocalPlayer.Idled:Connect(function()
-    local VirtualUser = game:GetService("VirtualUser")
+local antiAfkConn = LocalPlayer.Idled:Connect(function()
     VirtualUser:CaptureController()
     VirtualUser:ClickButton2(Vector2.new())
 end)
-table.insert(State.Connections, VirtualConnection)
+table.insert(State.Connections, antiAfkConn)
 
--- ============================================
--- Mobile Support: Tap to select nearest
--- ============================================
-
+-- Mobile tap to select
 UserInputService.TouchTap:Connect(function(touchPositions)
-    if #touchPositions == 0 then return end
+    if not touchPositions or #touchPositions == 0 then return end
     
     local tapPos = touchPositions[1]
     local camera = Workspace.CurrentCamera
@@ -1246,41 +1264,16 @@ UserInputService.TouchTap:Connect(function(touchPositions)
             local player = Players:GetPlayerFromCharacter(model)
             if player and player ~= LocalPlayer then
                 State.SelectedPlayer = player
-                local char, hum, root = getCharacter(player)
-                local localChar, _, localRoot = getCharacter(LocalPlayer)
-                local dist = root and localRoot and getDistance(root, localRoot) or 0
+                local _, _, root = getCharacter(player)
+                local _, _, localRoot = getCharacter(LocalPlayer)
+                local dist = (root and localRoot) and getDistance(root, localRoot) or 0
                 local level = getPlayerLevel(player)
-                PlayerDropdown.Text = string.format("%s | Lv.%d | %dm", player.Name, level, math.floor(dist))
+                PlayerDropdown.Text = string.format("  %s | Lv.%d | %dm", player.Name, level, math.floor(dist))
             end
         end
     end
 end)
 
--- Notify
-local function notify(title, text)
-    pcall(function()
-        game:GetService("StarterGui"):SetCore("SendNotification", {
-            Title = title,
-            Text = text,
-            Duration = 3
-        })
-    end)
-end
+notify("Bluezy Bounty Hunter", "v1.1 โหลดสำเร็จ! แก้บั๊กหมดแล้ว")
 
-notify("Bluezy Bounty Hunter", "โหลดสำเร็จ! เลือกเป้าแล้วกด Lock ได้เลยพี่")
-
--- Cleanup on unload
-game:GetService("CoreGui").ChildRemoved:Connect(function(child)
-    if child == ScreenGui then
-        stopFly()
-        stopAttack()
-        for _, conn in ipairs(State.Connections) do
-            conn:Disconnect()
-        end
-        for player in pairs(State.ESPObjects) do
-            removeESP(player)
-        end
-    end
-end)
-
-print("[Bluezy Bounty Hunter] Loaded successfully.")
+print("[Bluezy Bounty Hunter v1.1] Loaded successfully.")
