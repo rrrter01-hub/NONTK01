@@ -1,8 +1,7 @@
--- [[ BLOX FRUITS BOUNTY HUNTER & TELEMETRY HUB ]]
--- Compatible: PC (Wave, Solara, Electron, Synapse) & Mobile (Delta, Codex, Arceus X, Fluxus)
+-- [[ BLOX FRUITS BOUNTY HUNTER - FIXED WARP & STICK ENGINE ]]
+-- Fixed: Rubberbanding (ดีดกลับ), Physics Stutter, และ Attack Desync
 
 local Players = game:GetService("Players")
-local TweenService = game:GetService("TweenService")
 local RunService = game:GetService("RunService")
 local VirtualUser = game:GetService("VirtualUser")
 local UserInputService = game:GetService("UserInputService")
@@ -12,43 +11,35 @@ local CoreGui = game:GetService("CoreGui")
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
 
--- // CONFIGURATION & STATE
+-- // CONFIGURATION
 local Config = {
     AutoAttack = false,
     AutoWarp = false,
     SpectateTarget = false,
-    FastM1 = true,
-    AttackDistance = 5, -- Distance behind/above target
-    AttackHeight = 3,
-    TweenSpeed = 350,
+    AttackDistance = 3.5, -- ระยะห่างด้านหลังเป้าหมาย (studs)
+    AttackHeight = 2.0,   -- ระยะความสูงเหนือเป้าหมาย (studs)
     SelectedTarget = nil,
-    AutoEquip = "Melee", -- Melee / Sword / Fruit
+    AutoEquip = "Melee",  -- Melee / Sword / Fruit
     SafeZoneCheck = true,
-    Noclip = false
+    FastM1Delay = 0.08
 }
 
--- // SAFE ZONE & PVP DETECTION HELPER
+-- // TARGET STATS & SAFE ZONE
 local function IsPlayerInSafeZone(player)
     if not player or not player.Character then return true end
     local char = player.Character
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return true end
-
-    -- Check Blox Fruits ForceField / SafeZone Buff
     if char:FindFirstChildOfClass("ForceField") then return true end
     if char:FindFirstChild("SafeZone") or char:FindFirstChild("InSafeZone") then return true end
-
-    -- Check PVP disabled tag / level below requirements (Lv 20+ required for PvP)
+    
     local data = player:FindFirstChild("Data")
     if data and data:FindFirstChild("Level") and data.Level.Value < 20 then
         return true
     end
-
     return false
 end
 
-local function GetTargetHealthInfo(player)
-    if not player or not player.Character then return "N/A", 0, 0 end
+local function GetTargetHealth(player)
+    if not player or not player.Character then return "DEAD", 0, 0 end
     local hum = player.Character:FindFirstChildOfClass("Humanoid")
     if not hum then return "DEAD", 0, 0 end
     local hp = math.floor(hum.Health)
@@ -58,113 +49,106 @@ end
 
 local function GetTargetLevel(player)
     local data = player:FindFirstChild("Data")
-    if data and data:FindFirstChild("Level") then
-        return data.Level.Value
-    end
-    local leaderstats = player:FindFirstChild("leaderstats")
-    if leaderstats and leaderstats:FindFirstChild("Level") then
-        return leaderstats.Level.Value
-    end
+    if data and data:FindFirstChild("Level") then return data.Level.Value end
+    local ls = player:FindFirstChild("leaderstats")
+    if ls and ls:FindFirstChild("Level") then return ls.Level.Value end
     return "???"
 end
 
-local function GetTargetDistance(player)
+local function GetDistance(player)
     if not LocalPlayer.Character or not LocalPlayer.Character:FindFirstChild("HumanoidRootPart") then return 99999 end
     if not player.Character or not player.Character:FindFirstChild("HumanoidRootPart") then return 99999 end
     return math.floor((LocalPlayer.Character.HumanoidRootPart.Position - player.Character.HumanoidRootPart.Position).Magnitude)
 end
 
 -- // AUTO EQUIP WEAPON
-local function EquipWeapon(weaponType)
+local function EnsureWeaponEquipped()
     local char = LocalPlayer.Character
     local bp = LocalPlayer:FindFirstChild("Backpack")
     if not char or not bp then return end
-
-    for _, tool in pairs(bp:GetChildren()) do
-        if tool:IsA("Tool") then
-            local toolType = tool:GetAttribute("WeaponType") or tool.ToolTip
-            if string.find(string.lower(tool.Name), string.lower(weaponType)) or 
-               (toolType and string.find(string.lower(toolType), string.lower(weaponType))) then
-                char.Humanoid:EquipTool(tool)
-                break
+    
+    local currentTool = char:FindFirstChildOfClass("Tool")
+    if not currentTool then
+        for _, tool in pairs(bp:GetChildren()) do
+            if tool:IsA("Tool") then
+                local toolType = tool:GetAttribute("WeaponType") or tool.ToolTip
+                if string.find(string.lower(tool.Name), string.lower(Config.AutoEquip)) or 
+                   (toolType and string.find(string.lower(toolType), string.lower(Config.AutoEquip))) then
+                    char.Humanoid:EquipTool(tool)
+                    break
+                end
             end
         end
     end
 end
 
--- // FAST M1 ATTACK LOGIC
-local function ExecuteM1()
+-- // M1 ATTACK EXECUTION
+local function AttackTarget()
     if not LocalPlayer.Character then return end
+    EnsureWeaponEquipped()
     
     local tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-    if not tool then
-        EquipWeapon(Config.AutoEquip)
-        tool = LocalPlayer.Character:FindFirstChildOfClass("Tool")
-    end
-
     if tool then
         tool:Activate()
     end
-
-    -- Virtual click fallback for fast attack
+    
+    -- Virtual input bypass for M1 hit registration
     VirtualUser:CaptureController()
     VirtualUser:Button1Down(Vector2.new(0, 0))
-    task.wait(0.02)
+    task.wait(0.01)
     VirtualUser:Button1Up(Vector2.new(0, 0))
 end
 
--- // WARP & TELEPORT ENGINE
-local function WarpToTarget(targetPlayer)
-    if not targetPlayer or not targetPlayer.Character then return end
-    local targetHrp = targetPlayer.Character:FindFirstChild("HumanoidRootPart")
-    local myHrp = LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
-    
-    if not targetHrp or not myHrp then return end
+-- // HEARTBEAT LOCK-ON (แก้ปัญหาวาปไปวาปมา / NO RUBBERBAND)
+-- ใช้ Heartbeat เพื่อตรึงตำแหน่งตามเป้าหมายแบบเรียลไทม์ และ Reset Velocity ป้องกันเซิร์ฟเวอร์ดีดกลับ
+RunService.Heartbeat:Connect(function()
+    if Config.AutoWarp and Config.SelectedTarget and Config.SelectedTarget.Parent == Players then
+        local target = Config.SelectedTarget
+        local _, hp = GetTargetHealth(target)
+        local isSafe = IsPlayerInSafeZone(target)
 
-    -- Position slightly behind and above target for attack advantage
-    local targetCFrame = targetHrp.CFrame * CFrame.new(0, Config.AttackHeight, Config.AttackDistance)
-    
-    -- Face target
-    myHrp.CFrame = CFrame.new(targetCFrame.Position, targetHrp.Position)
-    
-    -- Stabilize body velocity
-    local bodyVel = myHrp:FindFirstChild("BountyVelocity") or Instance.new("BodyVelocity")
-    bodyVel.Name = "BountyVelocity"
-    bodyVel.MaxForce = Vector3.new(100000, 100000, 100000)
-    bodyVel.Velocity = Vector3.new(0, 0, 0)
-    bodyVel.Parent = myHrp
-end
+        if hp > 0 and (not Config.SafeZoneCheck or not isSafe) then
+            local myChar = LocalPlayer.Character
+            local targetChar = target.Character
 
--- // NOCLIP SYSTEM
-RunService.Stepped:Connect(function()
-    if (Config.AutoWarp or Config.Noclip) and LocalPlayer.Character then
-        for _, part in pairs(LocalPlayer.Character:GetDescendants()) do
-            if part:IsA("BasePart") and part.CanCollide then
-                part.CanCollide = false
+            if myChar and targetChar then
+                local myHrp = myChar:FindFirstChild("HumanoidRootPart")
+                local targetHrp = targetChar:FindFirstChild("HumanoidRootPart")
+
+                if myHrp and targetHrp then
+                    -- คำนวณตำแหน่งให้อยู่ด้านหลังและหันหน้าเข้าหาเป้าหมายตลอดเวลา
+                    local behindOffset = targetHrp.CFrame * CFrame.new(0, Config.AttackHeight, Config.AttackDistance)
+                    myHrp.CFrame = CFrame.new(behindOffset.Position, targetHrp.Position)
+                    
+                    -- ล้างค่า Velocity ทิ้งทั้งหมดเพื่อไม่ให้ Physics ดึงตัวกลับ
+                    myHrp.AssemblyLinearVelocity = Vector3.zero
+                    myHrp.AssemblyAngularVelocity = Vector3.zero
+
+                    -- ปิด Collision ชั่วคราวไม่ให้ตัวละครเบียดกันจนกระเด็น
+                    for _, part in pairs(myChar:GetChildren()) do
+                        if part:IsA("BasePart") then
+                            part.CanCollide = false
+                        end
+                    end
+                end
             end
         end
     end
 end)
 
--- // MAIN BOUNTY LOOP
+-- // AUTO ATTACK LOOP
 task.spawn(function()
     while true do
-        task.wait(0.05)
-        if Config.SelectedTarget and Config.SelectedTarget.Parent == Players then
+        task.wait(Config.FastM1Delay)
+        if Config.AutoAttack and Config.SelectedTarget and Config.SelectedTarget.Parent == Players then
             local target = Config.SelectedTarget
+            local _, hp = GetTargetHealth(target)
             local isSafe = IsPlayerInSafeZone(target)
-            local hpStr, hpVal = GetTargetHealthInfo(target)
 
-            -- Teleport & Lock-on
-            if Config.AutoWarp and hpVal > 0 and (not Config.SafeZoneCheck or not isSafe) then
-                WarpToTarget(target)
-            end
-
-            -- Auto M1 Attack
-            if Config.AutoAttack and hpVal > 0 and (not Config.SafeZoneCheck or not isSafe) then
-                local dist = GetTargetDistance(target)
-                if dist <= 25 then
-                    ExecuteM1()
+            if hp > 0 and (not Config.SafeZoneCheck or not isSafe) then
+                local dist = GetDistance(target)
+                if dist <= 20 then
+                    AttackTarget()
                 end
             end
         end
@@ -187,221 +171,194 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- // ==========================================
--- // TOUCH & MOUSE COMPATIBLE CLEAN UI ENGINE
--- // ==========================================
-
+-- // UI BUILDER (MOBILE & PC)
 local ScreenGui = Instance.new("ScreenGui")
-ScreenGui.Name = "BountyTelemetry_Onyx"
+ScreenGui.Name = "Onyx_Bounty_Fixed"
 ScreenGui.ResetOnSpawn = false
 
--- Executor-safe CoreGui attachment with fallback
 pcall(function()
     ScreenGui.Parent = gethui and gethui() or (CoreGui:FindFirstChild("RobloxGui") or CoreGui)
 end)
 if not ScreenGui.Parent then ScreenGui.Parent = LocalPlayer:WaitForChild("PlayerGui") end
 
--- Draggable Main Frame
 local MainFrame = Instance.new("Frame")
-MainFrame.Name = "MainFrame"
-MainFrame.Size = UDim2.new(0, 360, 0, 480)
-MainFrame.Position = UDim2.new(0.5, -180, 0.5, -240)
-MainFrame.BackgroundColor3 = Color3.fromRGB(18, 18, 22)
-MainFrame.BorderSizePixel = 0
+MainFrame.Size = UDim2.new(0, 350, 0, 470)
+MainFrame.Position = UDim2.new(0.5, -175, 0.5, -235)
+MainFrame.BackgroundColor3 = Color3.fromRGB(15, 15, 20)
 MainFrame.Active = true
 MainFrame.Draggable = true
 MainFrame.Parent = ScreenGui
+Instance.new("UICorner", MainFrame).CornerRadius = UDim.new(0, 10)
 
-local UICorner = Instance.new("UICorner", MainFrame)
-UICorner.CornerRadius = UDim.new(0, 10)
+local Stroke = Instance.new("UIStroke", MainFrame)
+Stroke.Color = Color3.fromRGB(100, 30, 255)
+Stroke.Thickness = 1.5
 
-local UIStroke = Instance.new("UIStroke", MainFrame)
-UIStroke.Color = Color3.fromRGB(80, 0, 255)
-UIStroke.Thickness = 1.5
-
--- Title Header
+-- Header
 local Title = Instance.new("TextLabel")
-Title.Size = UDim2.new(1, 0, 0, 40)
-Title.BackgroundColor3 = Color3.fromRGB(26, 26, 34)
-Title.Text = "⚡ ONYX BOUNTY TRACKER & M1 WARP"
-Title.TextColor3 = Color3.fromRGB(220, 220, 255)
+Title.Size = UDim2.new(1, 0, 0, 38)
+Title.BackgroundColor3 = Color3.fromRGB(22, 22, 30)
+Title.Text = "⚡ ONYX BOUNTY LOCK (ANTI-RUBBERBAND)"
+Title.TextColor3 = Color3.fromRGB(230, 230, 255)
 Title.Font = Enum.Font.GothamBold
-Title.TextSize = 13
+Title.TextSize = 12
 Title.Parent = MainFrame
 Instance.new("UICorner", Title).CornerRadius = UDim.new(0, 10)
 
--- Mobile Floating Toggle Button
-local ToggleBtn = Instance.new("TextButton")
-ToggleBtn.Name = "MobileToggle"
-ToggleBtn.Size = UDim2.new(0, 50, 0, 50)
-ToggleBtn.Position = UDim2.new(0, 15, 0.5, -25)
-ToggleBtn.BackgroundColor3 = Color3.fromRGB(80, 0, 255)
-ToggleBtn.Text = "🎯"
-ToggleBtn.TextSize = 22
-ToggleBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
-ToggleBtn.Parent = ScreenGui
-Instance.new("UICorner", ToggleBtn).CornerRadius = UDim.new(1, 0)
-ToggleBtn.MouseButton1Click:Connect(function()
+-- Mobile Floating Button
+local FloatBtn = Instance.new("TextButton")
+FloatBtn.Size = UDim2.new(0, 48, 0, 48)
+FloatBtn.Position = UDim2.new(0, 12, 0.45, 0)
+FloatBtn.BackgroundColor3 = Color3.fromRGB(100, 30, 255)
+FloatBtn.Text = "⚡"
+FloatBtn.TextSize = 20
+FloatBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+FloatBtn.Parent = ScreenGui
+Instance.new("UICorner", FloatBtn).CornerRadius = UDim.new(1, 0)
+FloatBtn.MouseButton1Click:Connect(function()
     MainFrame.Visible = not MainFrame.Visible
 end)
 
--- Target Stats Box
-local StatusCard = Instance.new("Frame")
-StatusCard.Size = UDim2.new(0.92, 0, 0, 115)
-StatusCard.Position = UDim2.new(0.04, 0, 0, 48)
-StatusCard.BackgroundColor3 = Color3.fromRGB(26, 26, 32)
-StatusCard.Parent = MainFrame
-Instance.new("UICorner", StatusCard).CornerRadius = UDim.new(0, 8)
+-- Target Status Board
+local StatCard = Instance.new("Frame")
+StatCard.Size = UDim2.new(0.92, 0, 0, 110)
+StatCard.Position = UDim2.new(0.04, 0, 0, 46)
+StatCard.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+StatCard.Parent = MainFrame
+Instance.new("UICorner", StatCard).CornerRadius = UDim.new(0, 8)
 
-local TargetNameLabel = Instance.new("TextLabel", StatusCard)
-TargetNameLabel.Size = UDim2.new(1, -16, 0, 22)
-TargetNameLabel.Position = UDim2.new(0, 8, 0, 5)
-TargetNameLabel.Text = "Target: [ None Selected ]"
-TargetNameLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
-TargetNameLabel.Font = Enum.Font.GothamBold
-TargetNameLabel.TextSize = 13
-TargetNameLabel.TextXAlignment = Enum.TextXAlignment.Left
+local TargetLabel = Instance.new("TextLabel", StatCard)
+TargetLabel.Size = UDim2.new(1, -14, 0, 22)
+TargetLabel.Position = UDim2.new(0, 8, 0, 6)
+TargetLabel.Text = "Target: [ None ]"
+TargetLabel.TextColor3 = Color3.fromRGB(255, 255, 255)
+TargetLabel.Font = Enum.Font.GothamBold
+TargetLabel.TextSize = 13
+TargetLabel.TextXAlignment = Enum.TextXAlignment.Left
 
-local StatsLabel = Instance.new("TextLabel", StatusCard)
-StatsLabel.Size = UDim2.new(1, -16, 0, 80)
-StatsLabel.Position = UDim2.new(0, 8, 0, 28)
-StatsLabel.Text = "Level: -- | HP: --\nDistance: -- m\nPVP Status: --\nAttack Ready: --"
-StatsLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
-StatsLabel.Font = Enum.Font.GothamMedium
-StatsLabel.TextSize = 12
-StatsLabel.TextXAlignment = Enum.TextXAlignment.Left
-StatsLabel.TextYAlignment = Enum.TextYAlignment.Top
+local InfoLabel = Instance.new("TextLabel", StatCard)
+InfoLabel.Size = UDim2.new(1, -14, 0, 75)
+InfoLabel.Position = UDim2.new(0, 8, 0, 28)
+InfoLabel.Text = "Level: -- | HP: --\nDistance: -- studs\nZone: --\nAttack Ready: --"
+InfoLabel.TextColor3 = Color3.fromRGB(180, 180, 200)
+InfoLabel.Font = Enum.Font.Gotham
+InfoLabel.TextSize = 12
+InfoLabel.TextXAlignment = Enum.TextXAlignment.Left
+InfoLabel.TextYAlignment = Enum.TextYAlignment.Top
 
--- Player Selector Dropdown / Scroll
-local PlayerListScroll = Instance.new("ScrollingFrame")
-PlayerListScroll.Size = UDim2.new(0.92, 0, 0, 140)
-PlayerListScroll.Position = UDim2.new(0.04, 0, 0, 170)
-PlayerListScroll.BackgroundColor3 = Color3.fromRGB(24, 24, 30)
-PlayerListScroll.ScrollBarThickness = 4
-PlayerListScroll.Parent = MainFrame
-Instance.new("UICorner", PlayerListScroll).CornerRadius = UDim.new(0, 8)
+-- Player Selector
+local Scroll = Instance.new("ScrollingFrame")
+Scroll.Size = UDim2.new(0.92, 0, 0, 135)
+Scroll.Position = UDim2.new(0.04, 0, 0, 165)
+Scroll.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
+Scroll.ScrollBarThickness = 3
+Scroll.Parent = MainFrame
+Instance.new("UICorner", Scroll).CornerRadius = UDim.new(0, 8)
 
-local UIListLayout = Instance.new("UIListLayout", PlayerListScroll)
-UIListLayout.Padding = UDim.new(0, 4)
-UIListLayout.SortOrder = Enum.SortOrder.LayoutOrder
+local Layout = Instance.new("UIListLayout", Scroll)
+Layout.Padding = UDim.new(0, 3)
 
--- Helper to make action buttons
-local function CreateButton(text, pos, callback)
-    local btn = Instance.new("TextButton")
-    btn.Size = UDim2.new(0.44, 0, 0, 36)
-    btn.Position = pos
-    btn.BackgroundColor3 = Color3.fromRGB(35, 35, 45)
-    btn.Text = text
-    btn.TextColor3 = Color3.fromRGB(240, 240, 255)
-    btn.Font = Enum.Font.GothamBold
-    btn.TextSize = 12
-    btn.Parent = MainFrame
-    Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 6)
-
-    btn.MouseButton1Click:Connect(function()
-        callback(btn)
-    end)
-    return btn
+local function MakeBtn(txt, pos, cb)
+    local b = Instance.new("TextButton")
+    b.Size = UDim2.new(0.44, 0, 0, 34)
+    b.Position = pos
+    b.BackgroundColor3 = Color3.fromRGB(30, 30, 38)
+    b.Text = txt
+    b.TextColor3 = Color3.fromRGB(240, 240, 255)
+    b.Font = Enum.Font.GothamBold
+    b.TextSize = 12
+    b.Parent = MainFrame
+    Instance.new("UICorner", b).CornerRadius = UDim.new(0, 6)
+    b.MouseButton1Click:Connect(function() cb(b) end)
+    return b
 end
 
--- Controls Grid
-local WarpBtn = CreateButton("Auto Warp: OFF", UDim2.new(0.04, 0, 0, 320), function(btn)
+-- Action Buttons
+local WarpToggle = MakeBtn("Lock Warp: OFF", UDim2.new(0.04, 0, 0, 310), function(b)
     Config.AutoWarp = not Config.AutoWarp
-    btn.Text = "Auto Warp: " .. (Config.AutoWarp and "ON" or "OFF")
-    btn.BackgroundColor3 = Config.AutoWarp and Color3.fromRGB(80, 0, 255) or Color3.fromRGB(35, 35, 45)
+    b.Text = "Lock Warp: " .. (Config.AutoWarp and "ON" or "OFF")
+    b.BackgroundColor3 = Config.AutoWarp and Color3.fromRGB(100, 30, 255) or Color3.fromRGB(30, 30, 38)
 end)
 
-local AttackBtn = CreateButton("Auto M1: OFF", UDim2.new(0.52, 0, 0, 320), function(btn)
+local AttackToggle = MakeBtn("Auto M1: OFF", UDim2.new(0.52, 0, 0, 310), function(b)
     Config.AutoAttack = not Config.AutoAttack
-    btn.Text = "Auto M1: " .. (Config.AutoAttack and "ON" or "OFF")
-    btn.BackgroundColor3 = Config.AutoAttack and Color3.fromRGB(255, 60, 60) or Color3.fromRGB(35, 35, 45)
+    b.Text = "Auto M1: " .. (Config.AutoAttack and "ON" or "OFF")
+    b.BackgroundColor3 = Config.AutoAttack and Color3.fromRGB(240, 50, 50) or Color3.fromRGB(30, 30, 38)
 end)
 
-local SpectateBtn = CreateButton("Spy Cam: OFF", UDim2.new(0.04, 0, 0, 365), function(btn)
+local SpyToggle = MakeBtn("Spy Cam: OFF", UDim2.new(0.04, 0, 0, 352), function(b)
     Config.SpectateTarget = not Config.SpectateTarget
-    btn.Text = "Spy Cam: " .. (Config.SpectateTarget and "ON" or "OFF")
-    btn.BackgroundColor3 = Config.SpectateTarget and Color3.fromRGB(0, 180, 120) or Color3.fromRGB(35, 35, 45)
+    b.Text = "Spy Cam: " .. (Config.SpectateTarget and "ON" or "OFF")
+    b.BackgroundColor3 = Config.SpectateTarget and Color3.fromRGB(0, 170, 110) or Color3.fromRGB(30, 30, 38)
 end)
 
-local WeaponBtn = CreateButton("Weapon: Melee", UDim2.new(0.52, 0, 0, 365), function(btn)
-    if Config.AutoEquip == "Melee" then
-        Config.AutoEquip = "Sword"
-    elseif Config.AutoEquip == "Sword" then
-        Config.AutoEquip = "Fruit"
-    else
-        Config.AutoEquip = "Melee"
+local WeaponToggle = MakeBtn("Weapon: Melee", UDim2.new(0.52, 0, 0, 352), function(b)
+    if Config.AutoEquip == "Melee" then Config.AutoEquip = "Sword"
+    elseif Config.AutoEquip == "Sword" then Config.AutoEquip = "Fruit"
+    else Config.AutoEquip = "Melee" end
+    b.Text = "Weapon: " .. Config.AutoEquip
+end)
+
+local Refresh = MakeBtn("🔄 Refresh Player List", UDim2.new(0.04, 0, 0, 396), function() end)
+Refresh.Size = UDim2.new(0.92, 0, 0, 34)
+
+-- Populate List
+local function UpdateList()
+    for _, c in pairs(Scroll:GetChildren()) do
+        if c:IsA("TextButton") then c:Destroy() end
     end
-    btn.Text = "Weapon: " .. Config.AutoEquip
-end)
-
-local RefreshBtn = CreateButton("🔄 Refresh Player List", UDim2.new(0.04, 0, 0, 415), function()
-    -- Rebuild player list
-end)
-RefreshBtn.Size = UDim2.new(0.92, 0, 0, 36)
-
--- Player List Population
-local function PopulatePlayerList()
-    for _, child in pairs(PlayerListScroll:GetChildren()) do
-        if child:IsA("TextButton") then child:Destroy() end
-    end
-
     for _, p in pairs(Players:GetPlayers()) do
         if p ~= LocalPlayer then
-            local pBtn = Instance.new("TextButton")
-            pBtn.Size = UDim2.new(1, -6, 0, 32)
-            pBtn.BackgroundColor3 = (Config.SelectedTarget == p) and Color3.fromRGB(80, 0, 200) or Color3.fromRGB(32, 32, 40)
-            
+            local btn = Instance.new("TextButton")
+            btn.Size = UDim2.new(1, -6, 0, 30)
+            btn.BackgroundColor3 = (Config.SelectedTarget == p) and Color3.fromRGB(100, 30, 220) or Color3.fromRGB(28, 28, 35)
+            local hp = GetTargetHealth(p)
             local lvl = GetTargetLevel(p)
-            local hp = GetTargetHealthInfo(p)
-            pBtn.Text = string.format(" %s | Lv.%s | HP: %s", p.DisplayName, tostring(lvl), tostring(hp))
-            pBtn.TextColor3 = Color3.fromRGB(240, 240, 240)
-            pBtn.Font = Enum.Font.Gotham
-            pBtn.TextSize = 11
-            pBtn.TextXAlignment = Enum.TextXAlignment.Left
-            pBtn.Parent = PlayerListScroll
-            Instance.new("UICorner", pBtn).CornerRadius = UDim.new(0, 5)
+            btn.Text = string.format(" %s | Lv.%s | HP: %s", p.DisplayName, tostring(lvl), tostring(hp))
+            btn.TextColor3 = Color3.fromRGB(240, 240, 240)
+            btn.Font = Enum.Font.Gotham
+            btn.TextSize = 11
+            btn.TextXAlignment = Enum.TextXAlignment.Left
+            btn.Parent = Scroll
+            Instance.new("UICorner", btn).CornerRadius = UDim.new(0, 5)
 
-            pBtn.MouseButton1Click:Connect(function()
+            btn.MouseButton1Click:Connect(function()
                 Config.SelectedTarget = p
-                PopulatePlayerList()
+                UpdateList()
             end)
         end
     end
-    PlayerListScroll.CanvasSize = UDim2.new(0, 0, 0, UIListLayout.AbsoluteContentSize.Y + 10)
+    Scroll.CanvasSize = UDim2.new(0, 0, 0, Layout.AbsoluteContentSize.Y + 10)
 end
 
-RefreshBtn.MouseButton1Click:Connect(PopulatePlayerList)
-Players.PlayerAdded:Connect(PopulatePlayerList)
-Players.PlayerRemoving:Connect(PopulatePlayerList)
-PopulatePlayerList()
+Refresh.MouseButton1Click:Connect(UpdateList)
+Players.PlayerAdded:Connect(UpdateList)
+Players.PlayerRemoving:Connect(UpdateList)
+UpdateList()
 
--- Realtime Telemetry HUD Updater
+-- Live Updater
 task.spawn(function()
     while true do
-        task.wait(0.3)
+        task.wait(0.25)
         if Config.SelectedTarget and Config.SelectedTarget.Parent == Players then
             local t = Config.SelectedTarget
-            local hpStr, hpVal = GetTargetHealthInfo(t)
+            local hpStr, hpVal = GetTargetHealth(t)
             local lvl = GetTargetLevel(t)
-            local dist = GetTargetDistance(t)
+            local dist = GetDistance(t)
             local inSafe = IsPlayerInSafeZone(t)
 
-            TargetNameLabel.Text = "Target: " .. t.DisplayName .. " (@" .. t.Name .. ")"
-            
-            local readyStatus = (hpVal > 0 and not inSafe) and "✅ YES (VULNERABLE)" or "❌ NO (SAFE/DEAD)"
-            local readyColor = (hpVal > 0 and not inSafe) and "rgb(50,255,100)" or "rgb(255,80,80)"
-            
-            StatsLabel.Text = string.format(
-                "Level: %s  |  HP: %s\nDistance: %d studs\nZone: %s\nAttack Ready: %s",
+            TargetLabel.Text = "Target: " .. t.DisplayName
+            InfoLabel.Text = string.format(
+                "Level: %s  |  HP: %s\nDistance: %d studs\nZone: %s\nStatus: %s",
                 tostring(lvl),
                 hpStr,
                 dist,
                 inSafe and "🛡️ SAFE ZONE" or "⚔️ COMBAT ZONE",
-                (hpVal > 0 and not inSafe) and "READY" or "PROTECTED"
+                (hpVal > 0 and not inSafe) and "READY TO KILL" or "PROTECTED/DEAD"
             )
         else
-            TargetNameLabel.Text = "Target: [ None Selected ]"
-            StatsLabel.Text = "Level: -- | HP: --\nDistance: -- studs\nZone: --\nAttack Ready: --"
+            TargetLabel.Text = "Target: [ None Selected ]"
+            InfoLabel.Text = "Level: -- | HP: --\nDistance: -- studs\nZone: --\nStatus: --"
         end
     end
 end)
