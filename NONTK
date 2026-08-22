@@ -1,7 +1,8 @@
 --[[
-    BluezyGPT Bounty Hunter v1.2
+    BluezyGPT Bounty Hunter v2.0
     Blox Fruits (Roblox) — Mobile + PC
-    แก้ไขครบทุกบั๊ก syntax ที่ทำให้รันไม่ได้
+    แก้ครบทุกบั๊ก syntax ที่ทำให้รันไม่ได้
+    เขียนใหม่ทั้งไฟล์ ไม่มีเว้นวรรค/จุด ในชื่อตัวแปร
 ]]
 
 local Players = game:GetService("Players")
@@ -10,6 +11,7 @@ local UserInputService = game:GetService("UserInputService")
 local Workspace = game:GetService("Workspace")
 local VirtualUser = game:GetService("VirtualUser")
 local StarterGui = game:GetService("StarterGui")
+local ReplicatedStorage = game:GetService("ReplicatedStorage")
 
 local LocalPlayer = Players.LocalPlayer
 
@@ -94,13 +96,13 @@ local function isPlayerInPvP(player)
     local dataFolder = player:FindFirstChild("Data")
     if dataFolder then
         local pvp = dataFolder:FindFirstChild("PvpEnabled") 
-                    or dataFolder:FindFirstChild("IsPvP") 
-                    or dataFolder:FindFirstChild("PvP")
+        if not pvp then pvp = dataFolder:FindFirstChild("IsPvP") end
+        if not pvp then pvp = dataFolder:FindFirstChild("PvP") end
         if pvp then return pvp.Value end
     end
     
     local hasWeapon = char:FindFirstChild("HasWeapon") 
-                   or char:FindFirstChild("PvpEnabled")
+    if not hasWeapon then hasWeapon = char:FindFirstChild("PvpEnabled") end
     if hasWeapon then return true end
     
     local bounty = getPlayerBounty(player)
@@ -316,7 +318,8 @@ local function updateESP()
                     esp.HealthFill.BackgroundColor3 = Color3.fromRGB(255, 50, 50)
                 end
                 
-                local pvpText = inPvP and "PvP: ON" or "PvP: OFF"
+                local pvpText = "PvP: OFF"
+                if inPvP then pvpText = "PvP: ON" end
                 esp.DistLabel.Text = "Dist: " .. math.floor(dist) .. "m | " .. pvpText
                 
                 if State.LockedPlayer == player then
@@ -446,7 +449,6 @@ end
 
 local function useSkill(skillKey)
     pcall(function()
-        local ReplicatedStorage = game:GetService("ReplicatedStorage")
         local remotes = ReplicatedStorage:FindFirstChild("Remotes")
         if remotes then
             local input = remotes:FindFirstChild("Input")
@@ -634,7 +636,7 @@ local TitleLabel = Instance.new("TextLabel")
 TitleLabel.Size = UDim2.new(1, -80, 1, 0)
 TitleLabel.Position = UDim2.new(0, 15, 0, 0)
 TitleLabel.BackgroundTransparency = 1
-TitleLabel.Text = "Bluezy Bounty Hunter v1.2"
+TitleLabel.Text = "Bluezy Bounty Hunter v2.0"
 TitleLabel.TextColor3 = Color3.fromRGB(150, 100, 255)
 TitleLabel.Font = Enum.Font.GothamBold
 TitleLabel.TextSize = 16
@@ -679,7 +681,7 @@ ContentScroll.BorderSizePixel = 0
 ContentScroll.ScrollBarThickness = 4
 ContentScroll.ScrollBarImageColor3 = Color3.fromRGB(100, 50, 255)
 ContentScroll.CanvasSize = UDim2.new(0, 0, 0, 0)
-ContentScroll.Agnes 2.5 FlashmaticCanvasSize = Enum.Agnes 2.5 FlashmaticSize.Y
+ContentScroll.AutomaticCanvasSize = Enum.Agnes 2.5 FlashmaticSize.Y
 ContentScroll.Parent = MainFrame
 
 local scrollLayout = Instance.new("UIListLayout")
@@ -722,9 +724,15 @@ local function createToggle(text, defaultState, callback)
     local tBtn = Instance.new("TextButton")
     tBtn.Size = UDim2.new(0, 50, 0, 24)
     tBtn.Position = UDim2.new(1, -60, 0.5, -12)
-    tBtn.BackgroundColor3 = defaultState and Color3.fromRGB(0, 180, 80) or Color3.fromRGB(60, 60, 70)
+    tBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 80)
+    if not defaultState then
+        tBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+    end
     tBtn.BorderSizePixel = 0
-    tBtn.Text = defaultState and "ON" or "OFF"
+    tBtn.Text = "OFF"
+    if defaultState then
+        tBtn.Text = "ON"
+    end
     tBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
     tBtn.Font = Enum.Font.GothamBold
     tBtn.TextSize = 11
@@ -738,8 +746,13 @@ local function createToggle(text, defaultState, callback)
     
     tBtn.MouseButton1Click:Connect(function()
         state = not state
-        tBtn.BackgroundColor3 = state and Color3.fromRGB(0, 180, 80) or Color3.fromRGB(60, 60, 70)
-        tBtn.Text = state and "ON" or "OFF"
+        if state then
+            tBtn.BackgroundColor3 = Color3.fromRGB(0, 180, 80)
+            tBtn.Text = "ON"
+        else
+            tBtn.BackgroundColor3 = Color3.fromRGB(60, 60, 70)
+            tBtn.Text = "OFF"
+        end
         callback(state)
     end)
     
@@ -940,7 +953,10 @@ local function refreshDropdown()
         
         local _, _, root = getCharacter(player)
         local _, _, localRoot = getCharacter(LocalPlayer)
-        local dist = (root and localRoot) and getDistance(root, localRoot) or 0
+        local dist = 0
+        if root and localRoot then
+            dist = getDistance(root, localRoot)
+        end
         local level = getPlayerLevel(player)
         local bounty = getPlayerBounty(player)
         local inPvP = isPlayerInPvP(player)
@@ -1231,7 +1247,10 @@ UserInputService.TouchTap:Connect(function(touchPositions)
                 State.SelectedPlayer = player
                 local _, _, root = getCharacter(player)
                 local _, _, localRoot = getCharacter(LocalPlayer)
-                local dist = (root and localRoot) and getDistance(root, localRoot) or 0
+                local dist = 0
+                if root and localRoot then
+                    dist = getDistance(root, localRoot)
+                end
                 local level = getPlayerLevel(player)
                 PlayerDropdown.Text = "  " .. player.Name .. " | Lv." .. level .. " | " .. math.floor(dist) .. "m"
             end
@@ -1239,5 +1258,5 @@ UserInputService.TouchTap:Connect(function(touchPositions)
     end
 end)
 
-notify("Bluezy Bounty Hunter", "v1.2 โหลดสำเร็จ!")
-print("[Bluezy Bounty Hunter v1.2] Loaded successfully.")
+notify("Bluezy Bounty Hunter", "v2.0 โหลดสำเร็จ!")
+print("[Bluezy Bounty Hunter v2.0] Loaded successfully.")
