@@ -1,5 +1,5 @@
--- [[ NONTK BOUNTY HUNTER v101 — GODSPEED OVERHEAD & DEMON BURST DPS ]] --
--- Overhaul: Warp Speed Engine (500 studs/s) | Ground Speed Boost | Zero-Delay Attack Burst | Hyper Spiral Evasion
+-- [[ NONTK BOUNTY HUNTER v102 — ADVANCED PVP RADAR & ANTI-SHIELD ENGINE ]] --
+-- Upgrades: Full Realtime PvP Status Analyzer | Auto-Skip Protected Targets | Team/Crew Ally Filter | Safezone Detector
 
 local Players = game:GetService("Players")
 local Workspace = game:GetService("Workspace")
@@ -8,7 +8,6 @@ local VirtualUser = game:GetService("VirtualUser")
 local VirtualInputManager = game:GetService("VirtualInputManager")
 local ReplicatedStorage = game:GetService("ReplicatedStorage")
 local UserInputService = game:GetService("UserInputService")
-local TweenService = game:GetService("TweenService")
 
 local LocalPlayer = Players.LocalPlayer
 local Camera = Workspace.CurrentCamera
@@ -24,25 +23,26 @@ local Config = {
     Enabled = false,
     SelectedPlayer = nil,
     AutoTargetNearest = false,
+    SkipNonAttackable = true,    -- ข้ามคนที่ไม่ติด PvP / อยู่ใน Safezone อัตโนมัติ
     Spectate = false,
     
-    -- Speed & Mobility Engine (HYPER BOOSTED)
-    FlySpeed = 380,             -- ปรับขึ้นเป็น 380 (เร่งได้ถึง 500)
-    GroundSpeedBoost = true,    -- เดินดินปกติวิ่งไว 110 ไม่เต่า
+    -- Speed & Mobility Engine
+    FlySpeed = 380,
+    GroundSpeedBoost = true,
     WalkSpeedVal = 110,
     JumpPowerVal = 120,
     OverheadDistance = 10,
     PredictionLead = 0.15,
-    InstantSnapDistance = 450,  -- ถ้าระยะไกลกว่านี้จะใช้ Snap CFrame พุ่งเข้าหาทันที
+    InstantSnapDistance = 450,
     
     -- 3D Hyper Evasion
     EvasionMode = true,
     EvasionRadius = 8,
-    EvasionSpeed = 10,          -- หมุนหลบความเร็วสูง 10 rad/s
+    EvasionSpeed = 10,
     
     -- Combat & Demon DPS
     FastAttack = true,
-    FastAttackBurst = 6,        -- ยิง 6 Packet ซ้อนต่อรอบ
+    FastAttackBurst = 6,
     AttackRadius = 80,
     AutoHaki = true,
     AutoKen = true,
@@ -51,7 +51,7 @@ local Config = {
     SkillSpam = true,
     Skills = {"Z", "X", "C", "V"},
     Weapons = {"Melee", "Sword", "Blox Fruit", "Gun"},
-    WeaponSwitchDelay = 0.20,   -- สลับอาวุธเร็วขึ้น รีดดาเมจไวขึ้น
+    WeaponSwitchDelay = 0.20,
     
     -- Defense & Godmode
     GodmodeDefense = true,
@@ -105,6 +105,15 @@ local function GetPlayerLevel(p)
     return 0
 end
 
+local function GetPlayerCrew(p)
+    if not p then return "" end
+    local data = p:FindFirstChild("Data")
+    if data and data:FindFirstChild("Crew") then return tostring(data.Crew.Value) end
+    local attr = p:GetAttribute("Crew")
+    if attr then return tostring(attr) end
+    return ""
+end
+
 local function GetPlayerHealth(p)
     if p and p.Character then
         local hum = p.Character:FindFirstChildOfClass("Humanoid")
@@ -127,23 +136,26 @@ local function UpdateSpectateCamera()
     end
 end
 
--- [[ COMBAT STATE & SAFE-ZONE SANITY ]] --
+-- [[ COMPREHENSIVE REALTIME PVP & COMBAT STATUS ANALYZER ]] --
 local function GetPlayerCombatState(p)
     local state = {
         IsAttackable = false,
         Badge = "[❓ UNKNOWN]",
+        Reason = "Checking status...",
         Color = Color3.fromRGB(160, 160, 160),
         Details = { Health = 0, MaxHealth = 0, Level = 0, Distance = 9999 }
     }
 
     if not p or p == LocalPlayer or not p.Parent then
         state.Badge = "[❌ LEFT]"
+        state.Reason = "Player Left Server"
         return state
     end
 
     local char = p.Character
     if not char then
         state.Badge = "[👻 NO CHAR]"
+        state.Reason = "Character Not Loaded"
         return state
     end
 
@@ -151,6 +163,7 @@ local function GetPlayerCombatState(p)
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hrp or not hum then
         state.Badge = "[👻 SPAWNING]"
+        state.Reason = "Spawning In"
         return state
     end
 
@@ -161,18 +174,23 @@ local function GetPlayerCombatState(p)
         state.Details.Distance = math.floor((RootPart.Position - hrp.Position).Magnitude)
     end
 
+    -- 1. ตรวจสอบสถานะการตาย
     if hum.Health <= 0 then
         state.Badge = "[💀 DEAD]"
+        state.Reason = "Target is dead"
         state.Color = Color3.fromRGB(130, 130, 130)
         return state
     end
 
-    if char:FindFirstChildOfClass("ForceField") or char:FindFirstChild("SafeZoneShield") then
-        state.Badge = "[✨ IMMUNE]"
+    -- 2. ตรวจสอบเกราะเกิด (Spawn ForceField / Shield)
+    if char:FindFirstChildOfClass("ForceField") or char:FindFirstChild("SafeZoneShield") or char:FindFirstChild("SpawnShield") then
+        state.Badge = "[✨ SPAWN SHIELD]"
+        state.Reason = "Spawn Protection Active (No Damage)"
         state.Color = Color3.fromRGB(255, 215, 0)
         return state
     end
 
+    -- 3. ตรวจสอบสถานะอยู่ในเซฟโซน (SafeZone)
     local inSafeZone = char:FindFirstChild("SafeZone") ~= nil 
         or char:FindFirstChild("InSafeZone") ~= nil 
         or p:FindFirstChild("SafeZone") ~= nil 
@@ -181,40 +199,81 @@ local function GetPlayerCombatState(p)
 
     if inSafeZone then
         state.Badge = "[🛡️ SAFEZONE]"
-        state.Color = Color3.fromRGB(80, 160, 255)
+        state.Reason = "Standing Inside Safezone"
+        state.Color = Color3.fromRGB(80, 170, 255)
         return state
     end
 
+    -- 4. ตรวจสอบสถานะปิด PvP / ไม่ติด PvP (PvP Disabled / Level Gap Shield)
     local pvpOff = char:FindFirstChild("PvPDisabled") ~= nil 
         or p:FindFirstChild("PvPDisabled") ~= nil 
         or char:GetAttribute("PvPDisabled") == true 
         or p:GetAttribute("PvPDisabled") == true
+        or (p:FindFirstChild("Data") and p.Data:FindFirstChild("PvPDisabled") and p.Data.PvPDisabled.Value == true)
 
     if pvpOff then
-        state.Badge = "[🚫 PVP-OFF]"
-        state.Color = Color3.fromRGB(240, 80, 80)
+        state.Badge = "[🚫 NO PVP]"
+        state.Reason = "PvP is Disabled / Protected (Immune to Damage)"
+        state.Color = Color3.fromRGB(255, 75, 75)
         return state
     end
 
+    -- 5. ตรวจสอบระบบพันธมิตร / กิลด์เดียวกัน (Ally / Same Crew)
+    local myCrew = GetPlayerCrew(LocalPlayer)
+    local targetCrew = GetPlayerCrew(p)
+    if myCrew ~= "" and targetCrew ~= "" and myCrew == targetCrew then
+        state.Badge = "[🤝 CREW ALLY]"
+        state.Reason = "Same Crew Member"
+        state.Color = Color3.fromRGB(255, 180, 50)
+        return state
+    end
+
+    -- 6. ตรวจสอบทีมทหารเรือเดียวกัน (Marines Friendly Fire Check)
+    if LocalPlayer.Team and p.Team and LocalPlayer.Team == p.Team and LocalPlayer.Team.Name == "Marines" then
+        local myAttrPvP = LocalPlayer:GetAttribute("EnablePvp") or false
+        local targetAttrPvP = p:GetAttribute("EnablePvp") or false
+        if not myAttrPvP or not targetAttrPvP then
+            state.Badge = "[⚓ MARINE ALLY]"
+            state.Reason = "Marine Teammate (PvP Not Mutual)"
+            state.Color = Color3.fromRGB(60, 220, 255)
+            return state
+        end
+    end
+
+    -- ผ่านทุกเงื่อนไข = ตีเข้า 100% (READY TO ATTACK)
     state.IsAttackable = true
-    state.Badge = "[⚔️ READY]"
+    state.Badge = "[⚔️ PVP READY]"
+    state.Reason = "PvP Active & Can Take Full Damage"
     state.Color = Color3.fromRGB(0, 255, 130)
     return state
 end
 
--- [[ AUTO TARGET NEAREST ]] --
+-- [[ SMART AUTO-TARGET SYSTEM ]] --
 local function FindBestTarget()
-    if not Config.AutoTargetNearest or Config.SelectedPlayer then return end
+    if not Config.AutoTargetNearest then return end
+    
+    -- ถ้ามีเป้าหมายอยู่แล้วแต่เขาหนีเข้าเซฟโซน หรือปิด PvP และเปิดโหมดข้าม ให้ปลดล็อคหาตัวใหม่
+    if Config.SelectedPlayer then
+        local st = GetPlayerCombatState(Config.SelectedPlayer)
+        if Config.SkipNonAttackable and not st.IsAttackable then
+            Config.SelectedPlayer = nil
+            ClearFlightPhysics()
+        else
+            return
+        end
+    end
+
     local closest, closestDist = nil, math.huge
     for _, p in ipairs(Players:GetPlayers()) do
         if p ~= LocalPlayer then
             local st = GetPlayerCombatState(p)
-            if st.IsAttackable and st.Details.Distance < closestDist then
+            if (not Config.SkipNonAttackable or st.IsAttackable) and st.Details.Distance < closestDist then
                 closestDist = st.Details.Distance
                 closest = p
             end
         end
     end
+
     if closest then
         Config.SelectedPlayer = closest
         if RefreshPList then RefreshPList() end
@@ -245,13 +304,11 @@ end
 local function ApplyGodmodeDefense()
     if not Character or not Humanoid or not RootPart then return end
     
-    -- Ground Speed Boost (เดินดินไม่เต่า)
     if Config.GroundSpeedBoost and not Config.Enabled then
         if Humanoid.WalkSpeed ~= Config.WalkSpeedVal then Humanoid.WalkSpeed = Config.WalkSpeedVal end
         if Humanoid.JumpPower ~= Config.JumpPowerVal then Humanoid.JumpPower = Config.JumpPowerVal end
     end
 
-    -- Realtime Stun Wipe
     if Config.WipeStunInstances then
         for _, item in ipairs(Character:GetChildren()) do
             if item.Name == "Stun" or item.Name == "Freeze" or item.Name == "Disabled" or item.Name == "Slow" or item.Name == "Stunned" then
@@ -351,14 +408,12 @@ local function GodspeedGlueToTarget(targetHRP)
     local predictedPos = targetHRP.Position + (targetVel * Config.PredictionLead)
     local rawDist = (predictedPos - curPos).Magnitude
 
-    -- Fast Warp Snap ถ้าระยะห่างเกินพิกัด
     if rawDist > Config.InstantSnapDistance then
         local snapPoint = predictedPos + Vector3.new(0, Config.OverheadDistance + 10, 0)
         RootPart.CFrame = CFrame.new(snapPoint, targetHRP.Position)
         return
     end
 
-    -- 3D Hyper Spiral Evasion Orbit
     local targetDestination
     if Config.EvasionMode then
         OrbitAngle = (OrbitAngle + (Config.EvasionSpeed * RunService.RenderStepped:Wait())) % (2 * math.pi)
@@ -373,14 +428,11 @@ local function GodspeedGlueToTarget(targetHRP)
     local delta = targetDestination - curPos
     local dist = delta.Magnitude
 
-    -- Look lock straight onto target
     FlightBG.CFrame = CFrame.lookAt(curPos, targetHRP.Position)
 
     if dist > 8 then
-        -- พุ่งด้วยความเร็วสูงสุด (FlySpeed 380 - 500)
         FlightBV.Velocity = delta.Unit * Config.FlySpeed
     else
-        -- ล็อคติดกบาลหนึบ 100% พร้อมขยับตามการเคลื่อนที่ของศัตรู
         FlightBV.Velocity = targetVel + (delta.Unit * 45)
         RootPart.AssemblyLinearVelocity = Vector3.zero
         RootPart.AssemblyAngularVelocity = Vector3.zero
@@ -450,7 +502,6 @@ end
 local function ExecuteDemonFastAttack(targetHRP)
     if not Config.FastAttack or not targetHRP then return end
     
-    -- Client-Side Attack Controller Unlock
     pcall(function()
         if not ActiveController then SetupCombatHooks() end
         if ActiveController then
@@ -467,7 +518,6 @@ local function ExecuteDemonFastAttack(targetHRP)
         end
     end)
     
-    -- Server-Side Multi-Part Packet Burst
     pcall(function()
         local targetChar = targetHRP.Parent
         if not targetChar then return end
@@ -509,7 +559,7 @@ local function CastSkills(targetHRP, targetHum)
     end
 end
 
--- [[ UNIVERSAL ESP SYSTEM ]] --
+-- [[ UNIVERSAL ESP SYSTEM (WITH REALTIME PVP BADGES) ]] --
 local function CreateESP(player)
     if player == LocalPlayer then return end
 
@@ -613,13 +663,13 @@ RunService.RenderStepped:Connect(function()
                 if esp.Billboard.Parent ~= char then esp.Billboard.Parent = char end
                 if esp.Highlight.Adornee ~= char then esp.Highlight.Adornee = char end
 
-                local renderColor = isTarget and Color3.fromRGB(255, 35, 35) or st.Color
+                local renderColor = isTarget and (st.IsAttackable and Color3.fromRGB(255, 35, 35) or Color3.fromRGB(255, 160, 0)) or st.Color
                 esp.Highlight.Enabled = Config.ESPChams
                 esp.Highlight.FillColor = renderColor
                 esp.Billboard.Enabled = true
 
                 esp.NameLabel.Text = string.format("%s [Lv.%d]", p.Name, st.Details.Level)
-                esp.StatusLabel.Text = isTarget and "[🎯 LOCKED TARGET]" or st.Badge
+                esp.StatusLabel.Text = isTarget and ("[🎯 " .. st.Badge:gsub("[%[%]]", "") .. "]") or st.Badge
                 esp.StatusLabel.TextColor3 = renderColor
                 esp.DistLabel.Text = string.format("%d studs | HP: %d/%d", st.Details.Distance, st.Details.Health, st.Details.MaxHealth)
 
@@ -637,7 +687,7 @@ RunService.RenderStepped:Connect(function()
     end
 end)
 
--- [[ MAIN COMBAT & MOVEMENT LOOP ]] --
+-- [[ MAIN COMBAT & SMART RADAR LOOP ]] --
 RunService.Heartbeat:Connect(function()
     ApplyGodmodeDefense()
 
@@ -653,6 +703,7 @@ RunService.Heartbeat:Connect(function()
     if target and target.Parent and target.Character then
         local tHRP = SafeGetHRP(target.Character)
         local tHum = target.Character:FindFirstChildOfClass("Humanoid")
+        local tState = GetPlayerCombatState(target)
 
         if not tHum or tHum.Health <= 0 or not tHRP then
             Config.SelectedPlayer = nil
@@ -661,19 +712,31 @@ RunService.Heartbeat:Connect(function()
             return
         end
 
+        -- ถ้าเปิดโหมดข้ามเป้าหมายที่ตีไม่เข้า แล้วศัตรูอยู่ในเซฟโซน/ปิด PvP ให้ปลดล็อคทันที
+        if Config.SkipNonAttackable and not tState.IsAttackable then
+            Config.SelectedPlayer = nil
+            ClearFlightPhysics()
+            if RefreshPList then RefreshPList() end
+            return
+        end
+
+        -- บินเกาะติดเป้าหมาย
         GodspeedGlueToTarget(tHRP)
         
         local dist = (RootPart.Position - tHRP.Position).Magnitude
         if dist <= Config.AttackRadius then
-            TriggerRaceV4()
+            -- โจมตีเฉพาะตอนที่เป้าหมายอยู่ในสถานะตีเข้าเท่านั้น
+            if tState.IsAttackable then
+                TriggerRaceV4()
 
-            if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
-                SwitchWeapon()
-                LastWeaponSwitch = tick()
+                if tick() - LastWeaponSwitch >= Config.WeaponSwitchDelay then
+                    SwitchWeapon()
+                    LastWeaponSwitch = tick()
+                end
+
+                ExecuteDemonFastAttack(tHRP)
+                CastSkills(tHRP, tHum)
             end
-
-            ExecuteDemonFastAttack(tHRP)
-            CastSkills(tHRP, tHum)
         end
     else
         ClearFlightPhysics()
@@ -720,7 +783,7 @@ end
 -- [[ UI SYSTEM ]] --
 local function BuildUI()
     local ScreenGui = Instance.new("ScreenGui")
-    ScreenGui.Name = "NONTK_V101_GODSPEED"
+    ScreenGui.Name = "NONTK_V102_PVPRADAR"
     ScreenGui.ResetOnSpawn = false
     
     local parentGui = (gethui and gethui()) or (pcall(function() return game:GetService("CoreGui") end) and game:GetService("CoreGui")) or LocalPlayer:WaitForChild("PlayerGui")
@@ -742,8 +805,8 @@ local function BuildUI()
 
     -- Top Mini Status Pill
     local MiniBar = Instance.new("Frame", ScreenGui)
-    MiniBar.Size = UDim2.new(0, 270, 0, 36)
-    MiniBar.Position = UDim2.new(0.5, -135, 0.0, 12)
+    MiniBar.Size = UDim2.new(0, 290, 0, 36)
+    MiniBar.Position = UDim2.new(0.5, -145, 0.0, 12)
     MiniBar.BackgroundColor3 = Color3.fromRGB(12, 14, 20)
     MiniBar.BorderSizePixel = 0
     Instance.new("UICorner", MiniBar).CornerRadius = UDim.new(0, 9)
@@ -764,9 +827,9 @@ local function BuildUI()
     MiniLabel.BackgroundTransparency = 1
     MiniLabel.TextColor3 = Color3.fromRGB(220, 240, 255)
     MiniLabel.Font = Enum.Font.GothamBold
-    MiniLabel.TextSize = 11
+    MiniLabel.TextSize = 10.5
     MiniLabel.TextXAlignment = Enum.TextXAlignment.Left
-    MiniLabel.Text = "NONTK v101 | GODSPEED"
+    MiniLabel.Text = "NONTK v102 | PVP RADAR READY"
 
     local OpenBtn = Instance.new("TextButton", MiniBar)
     OpenBtn.Size = UDim2.new(0, 52, 1, -8)
@@ -780,8 +843,8 @@ local function BuildUI()
 
     -- Main Container Frame
     local Main = Instance.new("Frame", ScreenGui)
-    Main.Size = UDim2.new(0, IsMobile and 360 or 450, 0, IsMobile and 530 or 590)
-    Main.Position = UDim2.new(0.5, IsMobile and -180 or -225, 0.05, 0)
+    Main.Size = UDim2.new(0, IsMobile and 360 or 460, 0, IsMobile and 540 or 600)
+    Main.Position = UDim2.new(0.5, IsMobile and -180 or -230, 0.05, 0)
     Main.BackgroundColor3 = Color3.fromRGB(10, 12, 16)
     Main.BorderSizePixel = 0
     Main.Visible = false
@@ -803,9 +866,9 @@ local function BuildUI()
     HeaderTitle.BackgroundTransparency = 1
     HeaderTitle.TextColor3 = Color3.fromRGB(240, 255, 245)
     HeaderTitle.Font = Enum.Font.GothamBold
-    HeaderTitle.TextSize = IsMobile and 11.5 or 13
+    HeaderTitle.TextSize = IsMobile and 11 or 12.5
     HeaderTitle.TextXAlignment = Enum.TextXAlignment.Left
-    HeaderTitle.Text = "⚡ NONTK v101 — GODSPEED PREDATOR"
+    HeaderTitle.Text = "⚡ NONTK v102 — PVP STATUS RADAR & PREDATOR"
 
     local CloseBtn = Instance.new("TextButton", Header)
     CloseBtn.Size = UDim2.new(0, 32, 0, 26)
@@ -864,7 +927,7 @@ local function BuildUI()
         return page, btn
     end
 
-    local LockPage = CreateTab("Godspeed Lock & Burst", "⚡", 0.0, 0.5)
+    local LockPage = CreateTab("PvP Radar & Lock", "🎯", 0.0, 0.5)
     local ConfigPage = CreateTab("Godmode & Settings", "⚙", 0.5, 0.5)
 
     local function SwitchTab(tabName)
@@ -879,9 +942,9 @@ local function BuildUI()
     for name, btn in pairs(TabButtons) do
         btn.MouseButton1Click:Connect(function() SwitchTab(name) end)
     end
-    SwitchTab("Godspeed Lock & Burst")
+    SwitchTab("PvP Radar & Lock")
 
-    -- [[ TAB 1: LOCK & PROMINENT SPEED CONTROLLER ]] --
+    -- [[ TAB 1: LOCK & RADAR CONTROLLERS ]] --
     local LockMasterToggle = Instance.new("TextButton", LockPage)
     LockMasterToggle.Size = UDim2.new(1, 0, 0, 38)
     LockMasterToggle.BackgroundColor3 = Color3.fromRGB(30, 35, 50)
@@ -897,7 +960,22 @@ local function BuildUI()
         if not Config.Enabled then ClearFlightPhysics() end
     end)
 
-    -- Fly Speed Panel (50 - 500 studs/s)
+    -- Skip Non-Attackable Target Toggle Row
+    local SmartFilterBtn = Instance.new("TextButton", LockPage)
+    SmartFilterBtn.Size = UDim2.new(1, 0, 0, 32)
+    SmartFilterBtn.BackgroundColor3 = Config.SkipNonAttackable and Color3.fromRGB(0, 140, 90) or Color3.fromRGB(40, 25, 25)
+    SmartFilterBtn.TextColor3 = Color3.fromRGB(255, 255, 255)
+    SmartFilterBtn.Font = Enum.Font.GothamBold
+    SmartFilterBtn.TextSize = 10.5
+    SmartFilterBtn.Text = Config.SkipNonAttackable and "🛡️ SMART FILTER: AUTO-SKIP NO-PVP / SAFEZONE (ON)" or "🛡️ SMART FILTER: AUTO-SKIP (OFF)"
+    Instance.new("UICorner", SmartFilterBtn).CornerRadius = UDim.new(0, 6)
+    SmartFilterBtn.MouseButton1Click:Connect(function()
+        Config.SkipNonAttackable = not Config.SkipNonAttackable
+        SmartFilterBtn.BackgroundColor3 = Config.SkipNonAttackable and Color3.fromRGB(0, 140, 90) or Color3.fromRGB(40, 25, 25)
+        SmartFilterBtn.Text = Config.SkipNonAttackable and "🛡️ SMART FILTER: AUTO-SKIP NO-PVP / SAFEZONE (ON)" or "🛡️ SMART FILTER: AUTO-SKIP (OFF)"
+    end)
+
+    -- Speed Panel
     local SpeedCard = Instance.new("Frame", LockPage)
     SpeedCard.Size = UDim2.new(1, 0, 0, 108)
     SpeedCard.BackgroundColor3 = Color3.fromRGB(16, 22, 30)
@@ -1120,15 +1198,15 @@ local function BuildUI()
         UpdateSpectateCamera()
     end)
 
-    -- Target Status Card
+    -- Realtime Target Status & PvP Reason Card
     local TargetStatusCard = Instance.new("TextLabel", LockPage)
-    TargetStatusCard.Size = UDim2.new(1, 0, 0, 56)
+    TargetStatusCard.Size = UDim2.new(1, 0, 0, 60)
     TargetStatusCard.BackgroundColor3 = Color3.fromRGB(14, 18, 24)
     TargetStatusCard.TextColor3 = Color3.fromRGB(200, 240, 225)
     TargetStatusCard.Font = Enum.Font.Gotham
     TargetStatusCard.TextSize = 9.5
     TargetStatusCard.TextWrapped = true
-    TargetStatusCard.Text = "Selected Target: NONE\nClick a player below to lock permanently."
+    TargetStatusCard.Text = "Selected Target: NONE\nClick a player below to scan and lock PvP."
     Instance.new("UICorner", TargetStatusCard).CornerRadius = UDim.new(0, 6)
 
     local ClearTargetBtn = Instance.new("TextButton", LockPage)
@@ -1176,7 +1254,7 @@ local function BuildUI()
 
                 local b = Instance.new("TextButton", PScroll)
                 b.Size = UDim2.new(1, 0, 0, 28)
-                b.BackgroundColor3 = isSelected and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(18, 22, 28)
+                b.BackgroundColor3 = isSelected and (st.IsAttackable and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(180, 100, 20)) or Color3.fromRGB(18, 22, 28)
                 b.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or st.Color
                 b.Font = Enum.Font.GothamBold
                 b.TextSize = 9.5
@@ -1203,7 +1281,7 @@ local function BuildUI()
     Players.PlayerAdded:Connect(RefreshPList)
     Players.PlayerRemoving:Connect(RefreshPList)
 
-    -- [[ TAB 2: GODMODE & BOOSTS ]] --
+    -- [[ TAB 2: GODMODE & SETTINGS ]] --
     local function AddToggle(parent, title, state, callback)
         local btn = Instance.new("TextButton", parent)
         btn.Size = UDim2.new(1, 0, 0, 34)
@@ -1236,7 +1314,7 @@ local function BuildUI()
     AddToggle(ConfigPage, "Auto Skill Rotation (Z, X, C, V)", Config.SkillSpam, function(v) Config.SkillSpam = v end)
     AddToggle(ConfigPage, "Player ESP & Chams", Config.ESPEnabled, function(v) Config.ESPEnabled = v end)
 
-    LockPage.CanvasSize = UDim2.new(0, 0, 0, 530)
+    LockPage.CanvasSize = UDim2.new(0, 0, 0, 560)
     ConfigPage.CanvasSize = UDim2.new(0, 0, 0, 460)
 
     -- Status Loop
@@ -1249,15 +1327,16 @@ local function BuildUI()
                 StatusDot.BackgroundColor3 = Color3.fromRGB(255, 220, 0)
                 MiniLabel.Text = "🛡️ ESCAPING LOW HP"
             elseif Config.Enabled and cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
-                StatusDot.BackgroundColor3 = Color3.fromRGB(255, 45, 45)
+                local st = GetPlayerCombatState(cur)
+                StatusDot.BackgroundColor3 = st.IsAttackable and Color3.fromRGB(0, 255, 120) or Color3.fromRGB(255, 75, 75)
                 local hp, maxHp = GetPlayerHealth(cur)
-                MiniLabel.Text = string.format("⚔ %s | %d/%d HP", cur.Name, hp, maxHp)
+                MiniLabel.Text = string.format("%s %s | %d/%d HP", st.Badge, cur.Name, hp, maxHp)
             elseif Config.Enabled then
                 StatusDot.BackgroundColor3 = Color3.fromRGB(0, 230, 140)
-                MiniLabel.Text = "⚡ GODSPEED CHASE READY"
+                MiniLabel.Text = "⚡ PVP RADAR: SCANNING TARGETS"
             else
                 StatusDot.BackgroundColor3 = Color3.fromRGB(80, 80, 80)
-                MiniLabel.Text = "NONTK v101 | IDLE"
+                MiniLabel.Text = "NONTK v102 | IDLE"
             end
 
             for p, btn in pairs(PButtons) do
@@ -1265,21 +1344,21 @@ local function BuildUI()
                     local st = GetPlayerCombatState(p)
                     local isSelected = (Config.SelectedPlayer == p)
                     btn.Text = string.format("  %s %s [Lv.%d] | %d studs", isSelected and "[🎯 LOCKED]" or st.Badge, p.Name, st.Details.Level, st.Details.Distance)
-                    btn.BackgroundColor3 = isSelected and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(18, 22, 28)
+                    btn.BackgroundColor3 = isSelected and (st.IsAttackable and Color3.fromRGB(0, 160, 90) or Color3.fromRGB(180, 100, 20)) or Color3.fromRGB(18, 22, 28)
                     btn.TextColor3 = isSelected and Color3.fromRGB(255, 255, 255) or st.Color
                 end
             end
 
             if not Config.Enabled then
-                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nFlySpeed: %d studs/s | Ground: %d WS\nEnable COMBAT SYSTEM to lock & warp.", Config.FlySpeed, Config.WalkSpeedVal)
+                TargetStatusCard.Text = string.format("⏸ SYSTEM PAUSED\nFlySpeed: %d studs/s | Ground: %d WS\nEnable COMBAT SYSTEM to scan & lock.", Config.FlySpeed, Config.WalkSpeedVal)
             elseif cur and cur.Character and cur.Character:FindFirstChildOfClass("Humanoid") then
                 local st = GetPlayerCombatState(cur)
-                local spyMsg = Config.Spectate and " | 👁️ SPY CAM: ON" or ""
-                local dodgeMsg = Config.EvasionMode and " [🌀 EVADING]" or ""
-                TargetStatusCard.Text = string.format("⚔ LOCKED: %s (Lv.%d)%s%s\n🔴 GODSPEED BURST | HP: %d/%d\nSpeed: %d studs/s | Height: %d studs",
-                    cur.Name, st.Details.Level, spyMsg, dodgeMsg, st.Details.Health, st.Details.MaxHealth, Config.FlySpeed, Config.OverheadDistance)
+                local spyMsg = Config.Spectate and " | 👁️ SPY" or ""
+                local attackStatusMsg = st.IsAttackable and "🟢 [CAN HIT 100%]" or ("🔴 [IMMUNE: " .. st.Reason .. "]")
+                TargetStatusCard.Text = string.format("⚔ TARGET: %s (Lv.%d)%s\n%s %s\nHP: %d/%d | Dist: %d studs",
+                    cur.Name, st.Details.Level, spyMsg, st.Badge, attackStatusMsg, st.Details.Health, st.Details.MaxHealth, st.Details.Distance)
             else
-                TargetStatusCard.Text = string.format("🎯 TARGET: NONE\nSpeed: %d studs/s | Height: %d studs\nSelect a player or turn ON Auto-Nearest.", Config.FlySpeed, Config.OverheadDistance)
+                TargetStatusCard.Text = string.format("🎯 TARGET: NONE\nFlySpeed: %d studs/s | Smart Filter: %s\nSelect a player or turn ON Auto-Nearest.", Config.FlySpeed, Config.SkipNonAttackable and "ACTIVE" or "OFF")
             end
         end
     end)
